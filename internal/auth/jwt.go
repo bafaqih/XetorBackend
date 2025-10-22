@@ -3,6 +3,9 @@ package auth
 
 import (
 	"time"
+	"strconv"
+
+
 	"github.com/golang-jwt/jwt/v5"
 	"xetor.id/backend/internal/config"
 )
@@ -14,9 +17,9 @@ func GenerateToken(userID int) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 
 	claims := &jwt.RegisteredClaims{
-		Subject:   string(rune(userID)),
-		ExpiresAt: jwt.NewNumericDate(expirationTime),
-	}
+    Subject:   strconv.Itoa(userID),
+    ExpiresAt: jwt.NewNumericDate(expirationTime),
+}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtSecretKey)
