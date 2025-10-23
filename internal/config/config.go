@@ -24,3 +24,12 @@ func GetJWTSecret() []byte {
 	}
 	return []byte(secret)
 }
+
+// GetMidtransServerKey mengambil nilai MIDTRANS_SERVER_KEY dari environment
+func GetMidtransServerKey() string {
+    key := os.Getenv("MIDTRANS_SERVER_KEY")
+    if key == "" {
+        log.Fatal("MIDTRANS_SERVER_KEY must be set in .env file")
+    }
+    return key
+}

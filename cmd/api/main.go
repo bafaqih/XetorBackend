@@ -8,6 +8,7 @@ import (
 	"xetor.id/backend/internal/repository"
 	"xetor.id/backend/internal/server"
 	"xetor.id/backend/internal/config"
+	"xetor.id/backend/internal/domain/midtrans"
 )
 
 func main() {
@@ -25,8 +26,11 @@ func main() {
 	adminService := admin.NewAdminService(adminRepo)
 	adminHandler := admin.NewAdminHandler(adminService)
 
-	
-	router := server.NewRouter(userHandler, adminHandler)
+	// Komponen Midtrans
+	midtransService := midtrans.NewMidtransService(userRepo)
+	midtransHandler := midtrans.NewMidtransHandler(midtransService)
+
+	router := server.NewRouter(userHandler, adminHandler, midtransHandler)
 	err := router.Run(":8080")
 	if err != nil {
 		log.Fatal("Failed to start server:", err)
