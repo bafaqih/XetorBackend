@@ -5,9 +5,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/domain/admin"
 	"xetor.id/backend/internal/domain/user" // Import package user kita
+	"xetor.id/backend/internal/domain/midtrans"
 )
 
-func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler) *gin.Engine {
+func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midtransHandler *midtrans.MidtransHandler) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/", func(c *gin.Context) {
@@ -26,9 +27,23 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler) *gin
 	userRoutes := r.Group("/user")
 	userRoutes.Use(AuthMiddleware())
 	{
-		// Rute untuk profil user
+		// Rute untuk profil dan pengelolaan akun
 		userRoutes.GET("/profile", userHandler.GetProfile)
 		userRoutes.PUT("/password", userHandler.ChangePassword)
+		userRoutes.GET("/transactions", userHandler.GetTransactionHistory)
+		userRoutes.DELETE("/account", userHandler.DeleteAccount)
+		userRoutes.GET("/wallet", userHandler.GetUserWallet)
+		userRoutes.GET("/statistics", userHandler.GetUserStatistics)
+		userRoutes.POST("/withdraw", userHandler.RequestWithdrawal)
+		userRoutes.POST("/topup", userHandler.RequestTopup)
+		userRoutes.POST("/transfer", userHandler.TransferXpoin)
+		
+		// Rute untuk konversi Xpoin dan Rupiah
+		convertRoutes := userRoutes.Group("/convert")
+		{
+			convertRoutes.POST("/xp-to-rp", userHandler.ConvertXpToRp)
+			convertRoutes.POST("/rp-to-xp", userHandler.ConvertRpToXp)
+		}
 
 		// Rute untuk User Addresses
 		addressRoutes := userRoutes.Group("/addresses")
@@ -39,12 +54,6 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler) *gin
 			addressRoutes.PUT("/:id", userHandler.UpdateUserAddress)
 			addressRoutes.DELETE("/:id", userHandler.DeleteUserAddress)
 		}
-
-		// Rute untuk riwayat transaksi user
-		userRoutes.GET("/transactions", userHandler.GetTransactionHistory)
-		// Rute untuk menghapus akun user
-		userRoutes.DELETE("/account", userHandler.DeleteAccount)
-
 
 	}
 
@@ -124,5 +133,8 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler) *gin
 		}
 	}
 
+	// Grup routing untuk Midtrans Webhook
+	r.POST("/midtrans/notification", midtransHandler.HandleNotification)
+	
 	return r
 }

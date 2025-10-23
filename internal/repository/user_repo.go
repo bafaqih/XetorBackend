@@ -7,6 +7,8 @@ import (
 	"os"
 	"fmt"
 	"strings"
+	"strconv"
+	"errors"
 
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/domain/user"
@@ -382,3 +384,455 @@ func (r *UserRepository) DeleteUserByID(id int) error {
     // Data terkait akan otomatis terhapus oleh ON DELETE CASCADE
     return nil
 }
+
+// --- User Wallet ---
+
+// FindOrCreateWalletByUserID mencari wallet user, atau membuatnya jika belum ada
+func (r *UserRepository) FindOrCreateWalletByUserID(userID int) (*user.UserWallet, error) {
+	querySelect := `
+		SELECT id, user_id, balance, xpoin, created_at, updated_at
+		FROM user_wallets
+		WHERE user_id = $1`
+
+	var wallet user.UserWallet
+	var balance float64 // Baca dari DB sebagai float
+
+	err := r.db.QueryRow(querySelect, userID).Scan(
+		&wallet.ID, &wallet.UserID, &balance, &wallet.Xpoin, &wallet.CreatedAt, &wallet.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Wallet belum ada, buat baru
+			log.Printf("Wallet not found for user ID %d, creating new one.", userID)
+			queryInsert := `
+				INSERT INTO user_wallets (user_id, balance, xpoin)
+				VALUES ($1, 0.00, 0)
+				RETURNING id, user_id, balance, xpoin, created_at, updated_at`
+
+			errInsert := r.db.QueryRow(queryInsert, userID).Scan(
+				&wallet.ID, &wallet.UserID, &balance, &wallet.Xpoin, &wallet.CreatedAt, &wallet.UpdatedAt,
+			)
+			if errInsert != nil {
+				log.Printf("Error creating wallet for user ID %d: %v", userID, errInsert)
+				return nil, errInsert
+			}
+			wallet.Balance = fmt.Sprintf("%.2f", balance) // Format ke string
+			log.Printf("Wallet created successfully for user ID %d with ID %d", userID, wallet.ID)
+			return &wallet, nil
+		}
+		// Error database lain saat SELECT
+		log.Printf("Error finding wallet for user ID %d: %v", userID, err)
+		return nil, err
+	}
+
+	// Wallet ditemukan
+	wallet.Balance = fmt.Sprintf("%.2f", balance) // Format ke string
+	return &wallet, nil
+}
+
+// --- User Statistics ---
+
+// FindOrCreateStatisticsByUserID mencari statistik user, atau membuatnya jika belum ada
+func (r *UserRepository) FindOrCreateStatisticsByUserID(userID int) (*user.UserStatistic, error) {
+	querySelect := `
+		SELECT id, user_id, waste, energy, co2, water, tree, created_at, updated_at
+		FROM user_statistics
+		WHERE user_id = $1`
+
+	var stats user.UserStatistic
+	var waste, energy, co2, water float64 // Baca DECIMAL sebagai float64
+
+	err := r.db.QueryRow(querySelect, userID).Scan(
+		&stats.ID, &stats.UserID, &waste, &energy, &co2, &water, &stats.Tree, &stats.CreatedAt, &stats.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Statistik belum ada, buat baru
+			log.Printf("Statistics not found for user ID %d, creating new entry.", userID)
+			queryInsert := `
+				INSERT INTO user_statistics (user_id, waste, energy, co2, water, tree)
+				VALUES ($1, 0.00, 0.00, 0.00, 0.00, 0)
+				RETURNING id, user_id, waste, energy, co2, water, tree, created_at, updated_at`
+
+			errInsert := r.db.QueryRow(queryInsert, userID).Scan(
+				&stats.ID, &stats.UserID, &waste, &energy, &co2, &water, &stats.Tree, &stats.CreatedAt, &stats.UpdatedAt,
+			)
+			if errInsert != nil {
+				log.Printf("Error creating statistics for user ID %d: %v", userID, errInsert)
+				return nil, errInsert
+			}
+			// Format ke string setelah insert
+			stats.Waste = fmt.Sprintf("%.2f", waste)
+			stats.Energy = fmt.Sprintf("%.2f", energy)
+			stats.CO2 = fmt.Sprintf("%.2f", co2)
+			stats.Water = fmt.Sprintf("%.2f", water)
+			log.Printf("Statistics created successfully for user ID %d with ID %d", userID, stats.ID)
+			return &stats, nil
+		}
+		// Error database lain saat SELECT
+		log.Printf("Error finding statistics for user ID %d: %v", userID, err)
+		return nil, err
+	}
+
+	// Statistik ditemukan
+	stats.Waste = fmt.Sprintf("%.2f", waste)
+	stats.Energy = fmt.Sprintf("%.2f", energy)
+	stats.CO2 = fmt.Sprintf("%.2f", co2)
+	stats.Water = fmt.Sprintf("%.2f", water)
+	return &stats, nil
+}
+
+// --- Transaction Status Update ---
+
+// UpdateWithdrawStatus memperbarui status withdraw berdasarkan orderID (misal: "WD-123")
+func (r *UserRepository) UpdateWithdrawStatus(orderID string, newStatus string, transactionID string) error {
+    // Ekstrak ID asli dari orderID (misal: "WD-123" -> 123)
+    parts := strings.Split(orderID, "-")
+    if len(parts) != 2 || parts[0] != "WD" {
+        log.Printf("Invalid withdraw order ID format for status update: %s", orderID)
+        // Kita return nil agar Midtrans tidak retry, tapi log error
+        // Atau return error jika ingin Midtrans coba lagi (hati-hati infinite loop)
+        return nil // Atau errors.New("invalid order ID format")
+    }
+    withdrawID, err := strconv.Atoi(parts[1])
+    if err != nil {
+        log.Printf("Error converting withdraw ID from order ID %s: %v", orderID, err)
+        return nil // Atau errors.New("invalid withdraw ID")
+    }
+
+    // TODO: Tambahkan kolom transaction_id dari Midtrans ke tabel user_withdraw_histories jika perlu
+
+    query := `UPDATE user_withdraw_histories SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'Pending'` // Hanya update jika masih pending
+    result, err := r.db.Exec(query, newStatus, withdrawID)
+    if err != nil {
+        log.Printf("Error updating withdraw status for ID %d: %v", withdrawID, err)
+        return err
+    }
+    rowsAffected, _ := result.RowsAffected()
+    if rowsAffected == 0 {
+        log.Printf("No pending withdraw found or status already updated for ID %d (Order ID: %s)", withdrawID, orderID)
+        // Return nil karena mungkin notifikasi datang telat atau duplikat
+        return nil
+    }
+    log.Printf("Withdraw status updated successfully for ID: %d (Order ID: %s) to %s", withdrawID, orderID, newStatus)
+    return nil
+}
+
+// --- Withdraw Process Functions ---
+
+// GetCurrentBalanceByUserID mengambil saldo saat ini
+func (r *UserRepository) GetCurrentBalanceByUserID(userID int) (float64, error) {
+	// Pastikan wallet ada (fungsi ini sudah otomatis membuat jika belum ada)
+	wallet, err := r.FindOrCreateWalletByUserID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("gagal mendapatkan wallet: %w", err)
+	}
+
+	// Konversi balance string ke float64
+	balance, err := strconv.ParseFloat(wallet.Balance, 64)
+	if err != nil {
+		log.Printf("Error parsing balance string for user ID %d: %v", userID, err)
+		return 0, errors.New("format saldo tidak valid")
+	}
+	return balance, nil
+}
+
+// ExecuteWithdrawTransaction menjalankan pengurangan saldo dan pencatatan riwayat dalam satu transaksi DB
+func (r *UserRepository) ExecuteWithdrawTransaction(userID int, amountToDeduct float64, fee float64, paymentMethodID int, accountNumber string) (string, error) {
+	// Mulai transaksi
+	tx, err := r.db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction for withdraw user ID %d: %v", userID, err)
+		return "", errors.New("gagal memulai transaksi database")
+	}
+	// Pastikan rollback jika ada error
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p) // Re-throw panic setelah rollback
+		} else if err != nil {
+			tx.Rollback() // Rollback jika ada error
+		} else {
+			err = tx.Commit() // Commit jika semua OK
+			if err != nil {
+				log.Printf("Error committing withdraw transaction for user ID %d: %v", userID, err)
+			}
+		}
+	}()
+
+	// 1. Kurangi saldo (dengan validasi saldo >= amountToDeduct)
+	queryUpdateWallet := `
+		UPDATE user_wallets
+		SET balance = balance - $1, updated_at = NOW()
+		WHERE user_id = $2 AND balance >= $1
+		RETURNING balance` // Kembalikan sisa saldo untuk verifikasi (opsional)
+
+	var remainingBalance float64 // Untuk menampung sisa saldo (opsional)
+	err = tx.QueryRow(queryUpdateWallet, amountToDeduct, userID).Scan(&remainingBalance)
+	if err != nil {
+		if err == sql.ErrNoRows { // Ini terjadi jika saldo tidak cukup (WHERE balance >= $1 gagal)
+			log.Printf("Insufficient balance for user ID %d during withdraw attempt.", userID)
+			return "", errors.New("saldo tidak mencukupi")
+		}
+		log.Printf("Error updating wallet balance during withdraw for user ID %d: %v", userID, err)
+		return "", errors.New("gagal mengupdate saldo")
+	}
+
+	// 2. Catat riwayat penarikan
+	queryInsertHistory := `
+		INSERT INTO user_withdraw_histories (user_id, payment_method_id, account_number, amount, fee, status, withdraw_time)
+		VALUES ($1, $2, $3, $4, $5, 'Pending', NOW())
+		RETURNING id` // Kembalikan ID withdraw history
+
+	var withdrawID int
+	amountRequested := amountToDeduct - fee // Jumlah yang diminta user (sebelum fee)
+	err = tx.QueryRow(queryInsertHistory, userID, paymentMethodID, accountNumber, amountRequested, fee).Scan(&withdrawID)
+	if err != nil {
+		log.Printf("Error inserting withdraw history for user ID %d: %v", userID, err)
+		return "", errors.New("gagal mencatat riwayat penarikan")
+	}
+
+	// Buat Order ID unik (misal: WD-<withdrawID>)
+	orderID := fmt.Sprintf("WD-%d", withdrawID)
+	log.Printf("Withdraw history created with ID %d (Order ID: %s) for user ID %d", withdrawID, orderID, userID)
+
+	// Jika semua berhasil, transaksi akan di-commit oleh defer func
+	return orderID, nil
+}
+
+// --- Top Up Process Functions ---
+
+// ExecuteTopupTransaction menjalankan penambahan saldo dan pencatatan riwayat top up dalam satu transaksi DB
+func (r *UserRepository) ExecuteTopupTransaction(userID int, amountToAdd float64, paymentMethodID int) (string, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction for topup user ID %d: %v", userID, err)
+		return "", errors.New("gagal memulai transaksi database")
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+			if err != nil {
+				log.Printf("Error committing topup transaction for user ID %d: %v", userID, err)
+			}
+		}
+	}()
+
+	// 1. Tambahkan saldo
+	queryUpdateWallet := `
+		UPDATE user_wallets
+		SET balance = balance + $1, updated_at = NOW()
+		WHERE user_id = $2
+		RETURNING balance`
+
+	var currentBalance float64
+	err = tx.QueryRow(queryUpdateWallet, amountToAdd, userID).Scan(&currentBalance)
+	// Kita perlu memastikan wallet ada SEBELUM memanggil ini,
+	// Fungsi FindOrCreateWalletByUserID bisa dipanggil di service sebelum eksekusi transaksi
+	if err != nil {
+		log.Printf("Error updating wallet balance during topup for user ID %d: %v", userID, err)
+		// Kembalikan error jika user_id tidak ada di wallet (seharusnya tidak terjadi jika FindOrCreate dipanggil dulu)
+		if err == sql.ErrNoRows {
+			return "", errors.New("wallet pengguna tidak ditemukan")
+		}
+		return "", errors.New("gagal mengupdate saldo")
+	}
+
+	// 2. Catat riwayat top up
+	queryInsertHistory := `
+		INSERT INTO user_topup_histories (user_id, payment_method_id, amount, status, topup_time)
+		VALUES ($1, $2, $3, 'Completed', NOW()) -- Status langsung Completed untuk simulasi
+		RETURNING id`
+
+	var topupID int
+	err = tx.QueryRow(queryInsertHistory, userID, paymentMethodID, amountToAdd).Scan(&topupID)
+	if err != nil {
+		log.Printf("Error inserting topup history for user ID %d: %v", userID, err)
+		return "", errors.New("gagal mencatat riwayat top up")
+	}
+
+	orderID := fmt.Sprintf("TP-%d", topupID)
+	log.Printf("Topup history created with ID %d (Order ID: %s) for user ID %d", topupID, orderID, userID)
+
+	return orderID, nil
+}
+
+// --- Transfer Xpoin Functions ---
+
+// FindUserByEmail mencari user berdasarkan email (hanya butuh ID untuk transfer)
+func (r *UserRepository) FindUserByEmail(email string) (int, error) {
+	query := "SELECT id FROM users WHERE email = $1"
+	var userID int
+	err := r.db.QueryRow(query, email).Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil // User tidak ditemukan, bukan error teknis
+		}
+		log.Printf("Error finding user by email %s: %v", email, err)
+		return 0, err // Error teknis
+	}
+	return userID, nil
+}
+
+// ExecuteTransferTransaction memproses pengurangan poin pengirim, penambahan poin penerima,
+// dan pencatatan riwayat dalam satu transaksi DB.
+func (r *UserRepository) ExecuteTransferTransaction(senderUserID, recipientUserID, amount int, recipientEmail string) (string, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction for transfer from user ID %d: %v", senderUserID, err)
+		return "", errors.New("gagal memulai transaksi database")
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+			if err != nil {
+				log.Printf("Error committing transfer transaction from user ID %d: %v", senderUserID, err)
+			}
+		}
+	}()
+
+	// 1. Kurangi Xpoin pengirim (validasi xpoin >= amount)
+	queryUpdateSender := `
+		UPDATE user_wallets
+		SET xpoin = xpoin - $1, updated_at = NOW()
+		WHERE user_id = $2 AND xpoin >= $1
+		RETURNING xpoin` // Kembalikan sisa poin (opsional)
+
+	var senderRemainingXpoin int
+	err = tx.QueryRow(queryUpdateSender, amount, senderUserID).Scan(&senderRemainingXpoin)
+	if err != nil {
+		if err == sql.ErrNoRows { // Terjadi jika poin tidak cukup
+			log.Printf("Insufficient xpoin for user ID %d during transfer attempt.", senderUserID)
+			return "", errors.New("xpoin tidak mencukupi")
+		}
+		log.Printf("Error updating sender wallet during transfer for user ID %d: %v", senderUserID, err)
+		return "", errors.New("gagal mengupdate xpoin pengirim")
+	}
+
+	// 2. Tambah Xpoin penerima
+	// Pastikan wallet penerima ada (FindOrCreateWalletByUserID dipanggil di service)
+	queryUpdateRecipient := `
+		UPDATE user_wallets
+		SET xpoin = xpoin + $1, updated_at = NOW()
+		WHERE user_id = $2`
+
+	resultRecipient, err := tx.Exec(queryUpdateRecipient, amount, recipientUserID)
+	if err != nil {
+		log.Printf("Error updating recipient wallet during transfer for user ID %d: %v", recipientUserID, err)
+		return "", errors.New("gagal mengupdate xpoin penerima")
+	}
+	rowsAffected, _ := resultRecipient.RowsAffected()
+	if rowsAffected == 0 {
+		// Ini seharusnya tidak terjadi jika FindOrCreateWalletByUserID dipanggil dulu
+		log.Printf("Recipient wallet not found during transfer update for user ID %d", recipientUserID)
+		return "", errors.New("wallet penerima tidak ditemukan")
+	}
+
+
+	// 3. Catat riwayat transfer
+	queryInsertHistory := `
+		INSERT INTO user_transfer_histories (user_id, amount, recipient_email, status, transfer_time)
+		VALUES ($1, $2, $3, 'Completed', NOW())
+		RETURNING id`
+
+	var transferID int
+	// Catatan: amount di history mungkin lebih baik float64/DECIMAL jika merepresentasikan Rupiah,
+	// tapi karena ini transfer Xpoin (integer), kita simpan amount sbg integer saja di history?
+	// Untuk konsistensi, kita simpan sbg DECIMAL(12,2) di DB tapi valuenya integer
+	err = tx.QueryRow(queryInsertHistory, senderUserID, float64(amount), recipientEmail).Scan(&transferID)
+	if err != nil {
+		log.Printf("Error inserting transfer history for user ID %d: %v", senderUserID, err)
+		return "", errors.New("gagal mencatat riwayat transfer")
+	}
+
+	orderID := fmt.Sprintf("TF-%d", transferID)
+	log.Printf("Transfer history created with ID %d (Order ID: %s) for user ID %d to %s", transferID, orderID, senderUserID, recipientEmail)
+
+	return orderID, nil
+}
+
+// --- Conversion Functions ---
+
+// ExecuteConversionTransaction memproses perubahan balance dan xpoin dalam satu transaksi
+func (r *UserRepository) ExecuteConversionTransaction(
+	userID int,
+	xpoinChange int, // Bisa positif (tambah) atau negatif (kurang)
+	balanceChange float64, // Bisa positif (tambah) atau negatif (kurang)
+	conversionType string,
+	amountXpInvolved int,
+	amountRpInvolved float64,
+	rate float64,
+) (*user.UserWallet, error) { // Kembalikan wallet terbaru
+
+	tx, err := r.db.Begin()
+	if err != nil { return nil, errors.New("gagal memulai transaksi database") }
+	defer func() {
+		if p := recover(); p != nil { tx.Rollback(); panic(p) } else
+		if err != nil { tx.Rollback() } else
+		{ err = tx.Commit() }
+	}()
+
+	// 1. Update Wallet (dengan validasi saldo/poin tidak minus)
+	// Query ini mengupdate KEDUANYA (xpoin dan balance) dan memvalidasi
+	queryUpdateWallet := `
+		UPDATE user_wallets
+		SET xpoin = xpoin + $1, balance = balance + $2, updated_at = NOW()
+		WHERE user_id = $3
+		  AND xpoin + $1 >= 0  -- Pastikan xpoin tidak jadi minus
+		  AND balance + $2 >= 0 -- Pastikan balance tidak jadi minus
+		RETURNING id, user_id, balance, xpoin, created_at, updated_at` // Kembalikan data wallet terbaru
+
+	var updatedWallet user.UserWallet
+	var currentBalance float64 // Baca balance dari DB
+
+	err = tx.QueryRow(queryUpdateWallet, xpoinChange, balanceChange, userID).Scan(
+		&updatedWallet.ID, &updatedWallet.UserID, &currentBalance, &updatedWallet.Xpoin,
+		&updatedWallet.CreatedAt, &updatedWallet.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows { // Terjadi jika saldo/poin tidak cukup
+			if xpoinChange < 0 {
+				return nil, errors.New("xpoin tidak mencukupi")
+			}
+			if balanceChange < 0 {
+				return nil, errors.New("saldo tidak mencukupi")
+			}
+			// Jika user belum punya wallet sama sekali (seharusnya tidak terjadi jika FindOrCreate dipanggil dulu)
+			return nil, errors.New("wallet pengguna tidak ditemukan atau saldo/xpoin tidak mencukupi")
+		}
+		log.Printf("Error updating wallet during conversion for user ID %d: %v", userID, err)
+		return nil, errors.New("gagal mengupdate wallet")
+	}
+	updatedWallet.Balance = fmt.Sprintf("%.2f", currentBalance) // Format balance
+
+	// 2. Catat Riwayat Konversi (jika tabelnya ada)
+	queryInsertHistory := `
+		INSERT INTO user_conversion_histories
+			(user_id, type, amount_xp, amount_rp, rate, conversion_time)
+		VALUES ($1, $2, $3, $4, $5, NOW())`
+
+	_, err = tx.Exec(queryInsertHistory, userID, conversionType, amountXpInvolved, amountRpInvolved, rate)
+	if err != nil {
+		// Jangan gagalkan transaksi utama jika log gagal, cukup catat error
+		log.Printf("Error inserting conversion history for user ID %d: %v", userID, err)
+		// return nil, errors.New("gagal mencatat riwayat konversi") // Jangan return error di sini
+	}
+
+	log.Printf("Conversion successful for user ID %d: %s (AmountXp: %d, AmountRp: %.2f)",
+		userID, conversionType, amountXpInvolved, amountRpInvolved)
+
+	return &updatedWallet, err // Return wallet terbaru dan error commit (jika ada)
+}
+

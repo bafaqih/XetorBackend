@@ -74,3 +74,64 @@ type TransactionHistoryItem struct {
 	Timestamp   time.Time      `json:"timestamp"`
 	Description string         `json:"description"` // Deskripsi singkat (misal: "Withdraw ke BCA", "Topup via GoPay", "Transfer ke email@...", "Deposit Sampah")
 }
+
+// UserWallet merepresentasikan data dari tabel user_wallets
+type UserWallet struct {
+	ID        int       `json:"id"`
+	UserID    int       `json:"user_id"`
+	Balance   string    `json:"balance"` // Kirim sebagai string agar presisi terjaga
+	Xpoin     int       `json:"xpoin"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UserStatistic merepresentasikan data dari tabel user_statistics
+type UserStatistic struct {
+	ID        int       `json:"id"`
+	UserID    int       `json:"user_id"`
+	Waste     string    `json:"waste"`     // Total sampah (kg), kirim sbg string
+	Energy    string    `json:"energy"`    // Energi dihemat (kWh), kirim sbg string
+	CO2       string    `json:"co2"`       // CO2 terselamatkan (kg), kirim sbg string
+	Water     string    `json:"water"`     // Air dihemat (L), kirim sbg string
+	Tree      int       `json:"tree"`      // Pohon terselamatkan
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// WithdrawRequest data untuk request penarikan saldo
+type WithdrawRequest struct {
+	PaymentMethodID int     `json:"payment_method_id" binding:"required"`
+	AccountNumber   string  `json:"account_number" binding:"required"`
+	Amount          float64 `json:"amount" binding:"required,gt=0"`
+	AccountHolderName string `json:"account_holder_name"`
+}
+
+// TopupRequest data untuk request top up saldo
+type TopupRequest struct {
+	PaymentMethodID int     `json:"payment_method_id" binding:"required"`
+	Amount          float64 `json:"amount" binding:"required,gt=0"` // Jumlah harus lebih besar dari 0
+}
+
+// TransferRequest data untuk request transfer Xpoin
+type TransferRequest struct {
+	RecipientEmail string `json:"recipient_email" binding:"required,email"` // Validasi email
+	Amount         int    `json:"amount" binding:"required,gt=0"`         // Jumlah Xpoin harus > 0
+}
+
+// ConversionRequest data umum untuk request konversi
+type ConversionRequest struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"` // Jumlah Xp atau Rp
+}
+
+// ConversionHistory merepresentasikan data dari tabel user_conversion_histories
+type ConversionHistory struct {
+	ID             int       `json:"id"`
+	UserID         int       `json:"user_id"`
+	Type           string    `json:"type"`
+	AmountXp       int       `json:"amount_xp"`
+	AmountRp       string    `json:"amount_rp"` // Kirim sebagai string
+	Rate           float64   `json:"rate"`
+	ConversionTime time.Time `json:"conversion_time"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}

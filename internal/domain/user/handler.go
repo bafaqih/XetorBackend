@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"database/sql"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/auth"
@@ -255,4 +256,196 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 
     // TODO: Mungkin perlu invalidate token JWT di sisi client/server? (Opsional)
     c.JSON(http.StatusOK, gin.H{"message": "Akun berhasil dihapus"})
+}
+
+// --- User Wallet Handler ---
+
+// GetUserWallet menangani request untuk mengambil data wallet user
+func (h *Handler) GetUserWallet(c *gin.Context) {
+	userIDStr, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	wallet, err := h.service.GetUserWallet(userIDStr.(string))
+	if err != nil {
+		// Service sudah handle error ID tidak valid atau kegagalan DB
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, wallet)
+}
+
+// --- User Statistics Handler ---
+
+// GetUserStatistics menangani request untuk mengambil data statistik user
+func (h *Handler) GetUserStatistics(c *gin.Context) {
+	userIDStr, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	stats, err := h.service.GetUserStatistics(userIDStr.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// --- User Withdraw Handler ---
+
+// RequestWithdrawal menangani request penarikan saldo
+func (h *Handler) RequestWithdrawal(c *gin.Context) {
+	userIDStr, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	var req WithdrawRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	orderID, err := h.service.RequestWithdrawal(userIDStr.(string), req)
+	if err != nil {
+		// Service akan memberikan pesan error yang sesuai (saldo tidak cukup, dll.)
+		// Kita bisa bedakan error 400 (Bad Request) vs 500 (Internal)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "minimal penarikan") || strings.Contains(errMsg, "saldo tidak mencukupi") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses permintaan penarikan"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Permintaan penarikan sedang diproses",
+		"order_id": orderID, // Kirim Order ID kembali (berguna untuk tracking)
+	})
+}
+
+// --- User Top Up Handler ---
+
+// RequestTopup menangani request top up saldo
+func (h *Handler) RequestTopup(c *gin.Context) {
+	userIDStr, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	var req TopupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	orderID, err := h.service.RequestTopup(userIDStr.(string), req)
+	if err != nil {
+		// Service akan memberikan pesan error yang sesuai
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "harus lebih besar dari 0") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses permintaan top up"})
+		}
+		return
+	}
+
+	// Untuk simulasi, langsung berikan pesan sukses
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Top up berhasil ditambahkan (simulasi)",
+		"order_id": orderID,
+		// Nanti di sini akan berisi Snap Token/URL dari Midtrans
+		// "payment_details": { ... }
+	})
+}
+
+// --- User Transfer Handler ---
+
+// TransferXpoin menangani request transfer xpoin
+func (h *Handler) TransferXpoin(c *gin.Context) {
+	userIDStr, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	var req TransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	orderID, err := h.service.TransferXpoin(userIDStr.(string), req)
+	if err != nil {
+		// Service akan memberikan pesan error yang sesuai
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "tidak mencukupi") ||
+		   strings.Contains(errMsg, "tidak ditemukan") ||
+		   strings.Contains(errMsg, "diri sendiri") ||
+		   strings.Contains(errMsg, "lebih besar dari 0") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses transfer"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Transfer Xpoin berhasil",
+		"order_id": orderID,
+	})
+}
+
+// --- Conversion Handlers ---
+
+func (h *Handler) ConvertXpToRp(c *gin.Context) {
+	userIDStr, _ := c.Get("userID")
+	var req ConversionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+	}
+
+	updatedWallet, err := h.service.ConvertXpToRp(userIDStr.(string), req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "angka bulat") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Konversi Xpoin ke Rupiah berhasil",
+		"wallet": updatedWallet,
+	})
+}
+
+func (h *Handler) ConvertRpToXp(c *gin.Context) {
+	userIDStr, _ := c.Get("userID")
+	var req ConversionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+	}
+
+	updatedWallet, err := h.service.ConvertRpToXp(userIDStr.(string), req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "terlalu kecil") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Konversi Rupiah ke Xpoin berhasil",
+		"wallet": updatedWallet,
+	})
 }
