@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"database/sql"
 	"strings"
+	"log"
 
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/auth"
@@ -58,7 +59,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 	}
 
 	// Jika validasi berhasil, buat token JWT
-	token, err := auth.GenerateToken(user.ID)
+	token, err := auth.GenerateToken(user.ID, "user")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat token"})
 		return
@@ -78,7 +79,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 // GetProfile menangani request untuk mengambil profil user yang sedang login
 func (h *Handler) GetProfile(c *gin.Context) {
 	// Ambil userID dari context yang sudah divalidasi oleh middleware
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -98,7 +99,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 // ChangePassword menangani request untuk mengubah password
 func (h *Handler) ChangePassword(c *gin.Context) {
 	// Ambil userID dari context (sudah divalidasi middleware)
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -134,7 +135,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 // --- User Address Handlers ---
 
 func (h *Handler) AddUserAddress(c *gin.Context) {
-	userIDStr, _ := c.Get("userID") // Ambil userID dari context
+	userIDStr, _ := c.Get("entityID") // Ambil userID dari context
 
 	var req CreateUserAddressRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -149,7 +150,7 @@ func (h *Handler) AddUserAddress(c *gin.Context) {
 }
 
 func (h *Handler) GetUserAddresses(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 
 	addresses, err := h.service.GetUserAddresses(userIDStr.(string))
 	if err != nil {
@@ -159,7 +160,7 @@ func (h *Handler) GetUserAddresses(c *gin.Context) {
 }
 
 func (h *Handler) GetUserAddressByID(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 	id, err := strconv.Atoi(c.Param("id")); if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"}); return
 	}
@@ -176,7 +177,7 @@ func (h *Handler) GetUserAddressByID(c *gin.Context) {
 }
 
 func (h *Handler) UpdateUserAddress(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 	id, err := strconv.Atoi(c.Param("id")); if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"}); return
 	}
@@ -200,7 +201,7 @@ func (h *Handler) UpdateUserAddress(c *gin.Context) {
 }
 
 func (h *Handler) DeleteUserAddress(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 	id, err := strconv.Atoi(c.Param("id")); if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"}); return
 	}
@@ -219,7 +220,7 @@ func (h *Handler) DeleteUserAddress(c *gin.Context) {
 
 // GetTransactionHistory menangani request untuk riwayat transaksi gabungan
 func (h *Handler) GetTransactionHistory(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 
 	transactions, err := h.service.GetTransactionHistory(userIDStr.(string))
 	if err != nil {
@@ -238,7 +239,7 @@ func (h *Handler) GetTransactionHistory(c *gin.Context) {
 
 // DeleteAccount menangani request hapus akun
 func (h *Handler) DeleteAccount(c *gin.Context) {
-    userIDStr, exists := c.Get("userID")
+    userIDStr, exists := c.Get("entityID")
     if !exists {
         c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
         return
@@ -262,7 +263,7 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 
 // GetUserWallet menangani request untuk mengambil data wallet user
 func (h *Handler) GetUserWallet(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -282,7 +283,7 @@ func (h *Handler) GetUserWallet(c *gin.Context) {
 
 // GetUserStatistics menangani request untuk mengambil data statistik user
 func (h *Handler) GetUserStatistics(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -301,7 +302,7 @@ func (h *Handler) GetUserStatistics(c *gin.Context) {
 
 // RequestWithdrawal menangani request penarikan saldo
 func (h *Handler) RequestWithdrawal(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -336,7 +337,7 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 
 // RequestTopup menangani request top up saldo
 func (h *Handler) RequestTopup(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -373,7 +374,7 @@ func (h *Handler) RequestTopup(c *gin.Context) {
 
 // TransferXpoin menangani request transfer xpoin
 func (h *Handler) TransferXpoin(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDStr, exists := c.Get("entityID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
 		return
@@ -409,7 +410,7 @@ func (h *Handler) TransferXpoin(c *gin.Context) {
 // --- Conversion Handlers ---
 
 func (h *Handler) ConvertXpToRp(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 	var req ConversionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
@@ -430,7 +431,7 @@ func (h *Handler) ConvertXpToRp(c *gin.Context) {
 }
 
 func (h *Handler) ConvertRpToXp(c *gin.Context) {
-	userIDStr, _ := c.Get("userID")
+	userIDStr, _ := c.Get("entityID")
 	var req ConversionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
@@ -447,5 +448,101 @@ func (h *Handler) ConvertRpToXp(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Konversi Rupiah ke Xpoin berhasil",
 		"wallet": updatedWallet,
+	})
+}
+
+// --- QR Token Handler ---
+
+// GenerateDepositQrToken menangani request pembuatan token QR deposit
+func (h *Handler) GenerateDepositQrToken(c *gin.Context) {
+	userIDStr, exists := c.Get("entityID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	token, expiresAt, err := h.service.GenerateDepositQrToken(userIDStr.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	response := GenerateQrTokenResponse{
+		Token:     token,
+		ExpiresAt: expiresAt,
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// --- User Profile Update Handlers ---
+
+// UpdateProfile menangani request update profil user
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	userIDStr, exists := c.Get("entityID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	var req UpdateUserProfileRequest
+	// Gunakan BindJSON agar tidak error jika body kosong tapi valid JSON {}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format data tidak valid: " + err.Error()})
+		return
+	}
+
+	err := h.service.UpdateProfile(userIDStr.(string), req)
+	if err != nil {
+		errMsg := err.Error()
+		if errMsg == "pengguna tidak ditemukan" {
+			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
+		} else if errMsg == "tidak ada data untuk diupdate" || strings.Contains(errMsg, "sudah digunakan") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			// Log error internal server
+			log.Printf("Internal error updating user profile %s: %v", userIDStr.(string), err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengupdate profil"})
+		}
+		return // Hentikan eksekusi jika ada error
+	}
+
+	// Hanya dieksekusi jika TIDAK ada error
+	c.JSON(http.StatusOK, gin.H{"message": "Profil berhasil diupdate"})
+}
+
+// UploadProfilePhoto menangani request upload foto profil user
+func (h *Handler) UploadProfilePhoto(c *gin.Context) {
+	userIDStr, exists := c.Get("entityID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
+
+	// Ambil file dari form-data dengan key "photo"
+	file, err := c.FormFile("photo")
+	if err != nil {
+		log.Printf("Error getting form file: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File foto tidak ditemukan atau format request salah"})
+		return
+	}
+
+	// Panggil service untuk upload dan update DB
+	newPhotoURL, err := h.service.UploadProfilePhoto(userIDStr.(string), file)
+	if err != nil {
+		errMsg := err.Error()
+		if errMsg == "pengguna tidak ditemukan" {
+			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
+		} else { // Error lain (baca file, cloudinary, db update)
+			// Log error internal server
+			log.Printf("Internal error uploading user photo %s: %v", userIDStr.(string), err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengunggah foto profil"})
+		}
+		return // Hentikan eksekusi jika ada error
+	}
+
+	// Hanya dieksekusi jika TIDAK ada error
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Foto profil berhasil diunggah",
+		"photo_url": newPhotoURL,
 	})
 }

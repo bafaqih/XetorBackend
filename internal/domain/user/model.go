@@ -135,3 +135,16 @@ type ConversionHistory struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
+
+// GenerateQrTokenResponse data respons untuk pembuatan token QR
+type GenerateQrTokenResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"` // Waktu kedaluwarsa dalam format timestamp
+}
+
+// UpdateUserProfileRequest data untuk update profil user
+type UpdateUserProfileRequest struct {
+	Fullname string `json:"fullname"`
+	Email    string `json:"email"` // Tanpa validasi email unik di binding, cek di service/repo
+	Phone    string `json:"phone"` // Bisa string kosong jika ingin menghapus
+}

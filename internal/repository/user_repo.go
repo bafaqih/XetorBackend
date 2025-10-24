@@ -836,3 +836,77 @@ func (r *UserRepository) ExecuteConversionTransaction(
 	return &updatedWallet, err // Return wallet terbaru dan error commit (jika ada)
 }
 
+// UpdateUserProfile mengupdate nama, email, dan/atau telepon user
+func (r *UserRepository) UpdateUserProfile(id int, req *user.UpdateUserProfileRequest) error {
+	fields := []string{}
+	args := []interface{}{}
+	argId := 1
+
+	// Hanya tambahkan field ke query jika nilainya TIDAK kosong di request
+	if req.Fullname != "" {
+		fields = append(fields, fmt.Sprintf("fullname = $%d", argId))
+		args = append(args, req.Fullname)
+		argId++
+	}
+	if req.Email != "" {
+		fields = append(fields, fmt.Sprintf("email = $%d", argId))
+		args = append(args, req.Email)
+		argId++
+	}
+	
+	if req.Phone != "" { // Hanya update jika phone di request tidak kosong
+		fields = append(fields, fmt.Sprintf("phone = $%d", argId))
+		args = append(args, sql.NullString{String: req.Phone, Valid: true}) // Simpan sebagai string valid
+		argId++
+	}
+
+	// Jika tidak ada field yang valid untuk diupdate
+	if len(fields) == 0 {
+		log.Println("UpdateUserProfile: No valid fields to update.")
+		return nil // Tidak ada yang diupdate, bukan error
+	}
+
+	args = append(args, id) // Tambahkan ID user untuk klausa WHERE
+
+	// query UPDATE
+	query := fmt.Sprintf("UPDATE users SET %s, updated_at = NOW() WHERE id = $%d",
+		strings.Join(fields, ", "), argId)
+
+	log.Printf("Executing query: %s with args: %v", query, args)
+
+	result, err := r.db.Exec(query, args...)
+	if err != nil {
+		 log.Printf("Error updating user profile ID %d: %v", id, err)
+		 // Cek error duplikat email
+		 if strings.Contains(err.Error(), "users_email_key") {
+			 return errors.New("email sudah digunakan")
+		 }
+		
+		 return errors.New("gagal mengupdate profil")
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("UpdateUserProfile: User with ID %d not found.", id)
+		return sql.ErrNoRows // User tidak ditemukan
+	}
+
+	log.Printf("User profile updated for ID: %d", id)
+	return nil
+}
+
+// UpdateUserPhotoURL mengupdate URL foto user di database
+func (r *UserRepository) UpdateUserPhotoURL(id int, photoURL string) error {
+	query := "UPDATE users SET photo = $1, updated_at = NOW() WHERE id = $2"
+	result, err := r.db.Exec(query, photoURL, id)
+	if err != nil {
+		log.Printf("Error updating user photo URL for ID %d: %v", id, err)
+		return errors.New("gagal mengupdate URL foto")
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows // User tidak ditemukan
+	}
+	log.Printf("User photo URL updated for ID: %d", id)
+	return nil
+}

@@ -9,8 +9,16 @@ import (
 	"sort"
 	"fmt"
 	"math"
+	"time"
+	"context"
+	"mime/multipart"
+
+	"github.com/cloudinary/cloudinary-go/v2"
+	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 
 	"golang.org/x/crypto/bcrypt"
+	"xetor.id/backend/internal/temporary_token"
+	"xetor.id/backend/internal/config"
 )
 
 const (
@@ -31,6 +39,8 @@ type Repository interface {
 	DeleteUserByID(id int) error
 	FindOrCreateWalletByUserID(userID int) (*UserWallet, error)
 	FindOrCreateStatisticsByUserID(userID int) (*UserStatistic, error)
+	UpdateUserProfile(id int, req *UpdateUserProfileRequest) error 
+    UpdateUserPhotoURL(id int, photoURL string) error
 
 	// Address-related methods
 	CreateAddress(addr *UserAddress) error
@@ -62,11 +72,12 @@ type Repository interface {
 
 type Service struct {
 	repo Repository
+	tokenStore *temporary_token.TokenStore
 }
 
 // NewService membuat instance baru dari Service
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, tokenStore *temporary_token.TokenStore) *Service {
+	return &Service{repo: repo, tokenStore: tokenStore}
 }
 
 // RegisterUser memproses data dari handler dan menyimpannya
@@ -489,4 +500,65 @@ func (s *Service) ConvertRpToXp(userIDStr string, req ConversionRequest) (*UserW
 	if err != nil { return nil, err } // Error sudah ditangani repo (misal: saldo tidak cukup)
 
 	return updatedWallet, nil
+}
+
+// --- QR Token Service Method ---
+
+// GenerateDepositQrToken membuat token sementara untuk deposit QR
+func (s *Service) GenerateDepositQrToken(userIDStr string) (string, time.Time, error) {
+	// Durasi token 5 menit
+	validityDuration := 5 * time.Minute
+	return s.tokenStore.CreateToken(userIDStr, validityDuration)
+}
+
+// --- User Profile Update Service ---
+
+// UpdateProfile memproses update data profil user
+func (s *Service) UpdateProfile(userIDStr string, req UpdateUserProfileRequest) error {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil { return errors.New("ID pengguna tidak valid") }
+
+	// Cek apakah ada data yang diupdate
+	if req.Fullname == "" && req.Email == "" && req.Phone == "" {
+		 return errors.New("tidak ada data untuk diupdate")
+	}
+    // TODO: Tambahkan validasi format email jika perlu
+
+	err = s.repo.UpdateUserProfile(userID, &req)
+	if err != nil {
+		if err == sql.ErrNoRows { return errors.New("pengguna tidak ditemukan") }
+		return err // Termasuk error email/phone duplikat dari repo
+	}
+	return nil
+}
+
+// UploadProfilePhoto menghandle upload file ke Cloudinary dan update DB user
+func (s *Service) UploadProfilePhoto(userIDStr string, fileHeader *multipart.FileHeader) (string, error) {
+	userID, err := strconv.Atoi(userIDStr); if err != nil { return "", errors.New("ID pengguna tidak valid") }
+
+	file, err := fileHeader.Open(); if err != nil { /*...*/ }
+	defer file.Close()
+
+	cldURL := config.GetCloudinaryURL();
+	cld, err := cloudinary.NewFromURL(cldURL); if err != nil { /*...*/ }
+
+	uploadParams := uploader.UploadParams{
+		Folder:         "xetor/users", // Simpan di folder xetor/users
+		PublicID:       fmt.Sprintf("profile_%d", userID),
+		Overwrite:      func() *bool { b := true; return &b }(), // Pointer ke true
+		Format:         "jpg",
+	}
+
+	ctx := context.Background();
+	uploadResult, err := cld.Upload.Upload(ctx, file, uploadParams); if err != nil { /*...*/ }
+
+	photoURL := uploadResult.SecureURL
+	err = s.repo.UpdateUserPhotoURL(userID, photoURL) // Panggil repo user
+	if err != nil {
+		log.Printf("DB update failed after Cloudinary upload for user %d: %v", userID, err)
+		return "", err
+	}
+
+	log.Printf("User %d profile photo updated to: %s", userID, photoURL)
+	return photoURL, nil
 }
