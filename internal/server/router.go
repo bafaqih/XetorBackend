@@ -4,11 +4,12 @@ package server
 import (
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/domain/admin"
-	"xetor.id/backend/internal/domain/user" // Import package user kita
+	"xetor.id/backend/internal/domain/user"
 	"xetor.id/backend/internal/domain/midtrans"
+	"xetor.id/backend/internal/domain/partner"
 )
 
-func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midtransHandler *midtrans.MidtransHandler) *gin.Engine {
+func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midtransHandler *midtrans.MidtransHandler, partnerHandler *partner.PartnerHandler) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/", func(c *gin.Context) {
@@ -22,13 +23,21 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 		authRoutes.POST("/login", userHandler.SignIn)
 	}
 
+	partnerAuthRoutes := r.Group("/partners")
+	{
+		partnerAuthRoutes.POST("/register", partnerHandler.SignUp)
+		partnerAuthRoutes.POST("/login", partnerHandler.SignIn)
+	}
+
 
 	// Grup routing untuk user yang terotentikasi
 	userRoutes := r.Group("/user")
-	userRoutes.Use(AuthMiddleware())
+	userRoutes.Use(AuthMiddleware(), RoleCheckMiddleware("user"))
 	{
 		// Rute untuk profil dan pengelolaan akun
 		userRoutes.GET("/profile", userHandler.GetProfile)
+		userRoutes.PUT("/profile", userHandler.UpdateProfile)
+		userRoutes.POST("/profile/photo", userHandler.UploadProfilePhoto)
 		userRoutes.PUT("/password", userHandler.ChangePassword)
 		userRoutes.GET("/transactions", userHandler.GetTransactionHistory)
 		userRoutes.DELETE("/account", userHandler.DeleteAccount)
@@ -55,7 +64,23 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			addressRoutes.DELETE("/:id", userHandler.DeleteUserAddress)
 		}
 
+		// Rute untuk Deposit via QR Code
+		depositRoutes := userRoutes.Group("/deposit")
+		{
+			depositRoutes.POST("/generate-qr-token", userHandler.GenerateDepositQrToken)
+			// Endpoint lain terkait deposit bisa ditambahkan di sini nanti
+		}
+
 	}
+
+	// Grup routing untuk partner
+	partnerRoutes := r.Group("/partner")
+    partnerRoutes.Use(AuthMiddleware(), RoleCheckMiddleware("partner"))
+    {
+        partnerRoutes.GET("/profile", partnerHandler.GetProfile)
+        partnerRoutes.PUT("/profile", partnerHandler.UpdateProfile)
+		partnerRoutes.POST("/profile/photo", partnerHandler.UploadProfilePhoto)
+    }
 
 
 	// Grup routing untuk admin

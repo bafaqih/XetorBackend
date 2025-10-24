@@ -10,16 +10,22 @@ import (
 	"xetor.id/backend/internal/config"
 )
 
-func GenerateToken(userID int) (string, error) {
-	// Ambil kunci rahasia dari config, bukan hardcode lagi
-	jwtSecretKey := config.GetJWTSecret()
+type JwtCustomClaims struct {
+	Role string `json:"role"`
+	jwt.RegisteredClaims
+}
 
+func GenerateToken(entityID int, role string) (string, error) {
+	jwtSecretKey := config.GetJWTSecret()
 	expirationTime := time.Now().Add(24 * time.Hour)
 
-	claims := &jwt.RegisteredClaims{
-    Subject:   strconv.Itoa(userID),
-    ExpiresAt: jwt.NewNumericDate(expirationTime),
-}
+	claims := &JwtCustomClaims{ // Gunakan struct custom
+		role, // Isi role
+		jwt.RegisteredClaims{
+			Subject:   strconv.Itoa(entityID), // ID User atau Partner
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtSecretKey)

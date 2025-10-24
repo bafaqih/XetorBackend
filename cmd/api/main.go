@@ -9,6 +9,8 @@ import (
 	"xetor.id/backend/internal/server"
 	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/domain/midtrans"
+	"xetor.id/backend/internal/temporary_token"
+	"xetor.id/backend/internal/domain/partner"
 )
 
 func main() {
@@ -16,10 +18,18 @@ func main() {
 	database.ConnectDB()
 	db := database.DB
 
+	// Inisialisasi TokenStore untuk token sementara
+	tokenStore := temporary_token.NewTokenStore()
+
 	// Komponen User
 	userRepo := repository.NewUserRepository(db)
-	userService := user.NewService(userRepo)
+	userService := user.NewService(userRepo, tokenStore)
 	userHandler := user.NewHandler(userService)
+
+	// Komponen Partner
+	partnerRepo := repository.NewPartnerRepository(db)
+	partnerService := partner.NewPartnerService(partnerRepo)
+	partnerHandler := partner.NewPartnerHandler(partnerService)
 
 	// Komponen Admin
 	adminRepo := repository.NewAdminRepository(db)
@@ -30,7 +40,7 @@ func main() {
 	midtransService := midtrans.NewMidtransService(userRepo)
 	midtransHandler := midtrans.NewMidtransHandler(midtransService)
 
-	router := server.NewRouter(userHandler, adminHandler, midtransHandler)
+	router := server.NewRouter(userHandler, adminHandler, midtransHandler, partnerHandler)
 	err := router.Run(":8080")
 	if err != nil {
 		log.Fatal("Failed to start server:", err)
