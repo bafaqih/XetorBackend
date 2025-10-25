@@ -12,6 +12,7 @@ import (
 	"strings"
 	"math"
 	"time"
+	"sort"
 
 
 	"github.com/cloudinary/cloudinary-go/v2"
@@ -19,9 +20,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/auth" // Import JWT generator
 	"xetor.id/backend/internal/config"
+	"xetor.id/backend/internal/domain/user"
 )
 
 const conversionRateRpToXp = 1.0 / 5.0 // 1 Rp = 0.2 Xp
+const conversionRateXpToRp = 5.0   // 1 Xp = 5 Rp
+
+const (
+	minWithdrawalAmount = 10000.0
+	withdrawalFee       = 2500.0
+	minTopupAmount      = 10000.0
+)
 
 // Definisikan interface repository yang dibutuhkan
 type PartnerRepository interface {
@@ -33,6 +42,9 @@ type PartnerRepository interface {
 	UpdatePartnerPhotoURL(id int, photoURL string) error
 	GetCurrentPasswordHashByID(id int) (string, error)
 	UpdatePassword(id int, newHashedPassword string) error
+	DeletePartnerByID(id int) error
+	FindOrCreateWalletByPartnerID(partnerID int) (*PartnerWallet, error)
+	FindOrCreateStatisticsByPartnerID(partnerID int) (*PartnerStatistic, error)
 
 	// Alamat partner
 	GetAddressByPartnerID(partnerID int) (*PartnerAddress, error)
@@ -49,14 +61,35 @@ type PartnerRepository interface {
 	GetWastePriceDetailByID(detailID int, partnerID int) (*PartnerWastePriceDetail, error)
 	UpdateWastePriceDetail(detailID int, partnerID int, detail *PartnerWastePriceDetail) error
 	DeleteWastePriceDetail(detailID int, partnerID int) error
+
+	// Riwayat transaksi partner
+	GetWithdrawHistoryForPartner(partnerID int) ([]PartnerTransactionHistoryItem, error)
+	GetTopupHistoryForPartner(partnerID int) ([]PartnerTransactionHistoryItem, error)
+	GetConversionHistoryForPartner(partnerID int) ([]PartnerTransactionHistoryItem, error)
+	GetTransferHistoryForPartner(partnerID int) ([]PartnerTransactionHistoryItem, error)
+	GetDepositHistoryByPartnerID(partnerID int) ([]DepositHistoryHeader, error)
+
+	// Withdrawal execution
+	GetPartnerCurrentBalanceByID(partnerID int) (float64, error)
+	ExecutePartnerWithdrawTransaction(partnerID int, amountToDeduct float64, fee float64, paymentMethodID int, accountNumber string) (string, error)
+	
+	// Topup execution
+	ExecutePartnerTopupTransaction(partnerID int, amountToAdd float64, paymentMethodID int) (string, error)
+
+	// Transfer Xpoin
+	ExecutePartnerTransferTransaction(senderPartnerID, amount int, recipientUserID *int, recipientPartnerID *int, recipientEmail string) (string, error)
+
+	// Conversion execution
+	ExecutePartnerConversionTransaction(partnerID int, xpoinChange int, balanceChange float64, conversionType string, amountXpInvolved int, amountRpInvolved float64, rate float64) (*PartnerWallet, error)
 }
 
 type PartnerService struct {
 	repo PartnerRepository
+	userRepo user.Repository
 }
 
-func NewPartnerService(repo PartnerRepository) *PartnerService {
-	return &PartnerService{repo: repo}
+func NewPartnerService(repo PartnerRepository, userRepo user.Repository) *PartnerService {
+	return &PartnerService{repo: repo, userRepo: userRepo}
 }
 
 // RegisterPartner memproses registrasi partner baru
@@ -546,4 +579,271 @@ func (s *PartnerService) DeleteWastePrice(detailID int, partnerIDStr string) err
 		return errors.New("gagal menghapus detail harga sampah")
 	}
 	return nil
+}
+
+// --- Partner Financial Transaction History Service ---
+
+// GetFinancialTransactionHistory menggabungkan riwayat withdraw, topup, convert, transfer
+func (s *PartnerService) GetFinancialTransactionHistory(partnerIDStr string) ([]PartnerTransactionHistoryItem, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	allTransactions := make([]PartnerTransactionHistoryItem, 0)
+
+	// Ambil data dari masing-masing tabel (handle error per jenis)
+	withdrawHistory, errW := s.repo.GetWithdrawHistoryForPartner(partnerID)
+	if errW != nil { log.Printf("Error getting withdraw history for partner %d: %v", partnerID, errW) }
+	allTransactions = append(allTransactions, withdrawHistory...)
+
+	topupHistory, errT := s.repo.GetTopupHistoryForPartner(partnerID)
+	if errT != nil { log.Printf("Error getting topup history for partner %d: %v", partnerID, errT) }
+	allTransactions = append(allTransactions, topupHistory...)
+
+	convertHistory, errC := s.repo.GetConversionHistoryForPartner(partnerID)
+	if errC != nil { log.Printf("Error getting conversion history for partner %d: %v", partnerID, errC) }
+	allTransactions = append(allTransactions, convertHistory...)
+
+	transferHistory, errTr := s.repo.GetTransferHistoryForPartner(partnerID)
+	if errTr != nil { log.Printf("Error getting transfer history for partner %d: %v", partnerID, errTr) }
+	allTransactions = append(allTransactions, transferHistory...)
+
+
+	// Urutkan semua transaksi berdasarkan waktu (terbaru dulu)
+	sort.SliceStable(allTransactions, func(i, j int) bool {
+		return allTransactions[i].Timestamp.After(allTransactions[j].Timestamp)
+	})
+
+	return allTransactions, nil // Tidak return error utama jika salah satu gagal
+}
+
+// --- Partner Deposit History Service ---
+
+// GetDepositHistory mengambil riwayat setoran sampah partner
+func (s *PartnerService) GetDepositHistory(partnerIDStr string) ([]DepositHistoryHeader, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	history, err := s.repo.GetDepositHistoryByPartnerID(partnerID)
+	if err != nil { return nil, errors.New("gagal mengambil riwayat deposit") }
+
+	// Repo sudah handle jika kosong (return array kosong)
+	return history, nil
+}
+
+// DeleteAccount menghapus akun partner
+func (s *PartnerService) DeleteAccount(partnerIDStr string) error {
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil { return errors.New("ID partner tidak valid") }
+
+	err = s.repo.DeletePartnerByID(partnerID)
+	if err != nil {
+		 if err == sql.ErrNoRows { return errors.New("partner tidak ditemukan") }
+		return err // Error teknis repo
+	}
+	return nil // Sukses
+}
+
+// --- Partner Wallet Service Method ---
+
+// GetPartnerWallet mengambil data wallet partner (membuat jika belum ada)
+func (s *PartnerService) GetPartnerWallet(partnerIDStr string) (*PartnerWallet, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	wallet, err := s.repo.FindOrCreateWalletByPartnerID(partnerID)
+	if err != nil {
+		return nil, errors.New("gagal mengambil atau membuat wallet partner")
+	}
+	return wallet, nil
+}
+
+// --- Partner Statistics Service Method ---
+
+// GetPartnerStatistics mengambil data statistik partner (membuat jika belum ada)
+func (s *PartnerService) GetPartnerStatistics(partnerIDStr string) (*PartnerStatistic, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	stats, err := s.repo.FindOrCreateStatisticsByPartnerID(partnerID)
+	if err != nil {
+		return nil, errors.New("gagal mengambil atau membuat statistik partner")
+	}
+	return stats, nil
+}
+
+// --- Partner Withdraw Service Method ---
+
+// RequestPartnerWithdrawal memproses permintaan penarikan saldo partner
+func (s *PartnerService) RequestPartnerWithdrawal(partnerIDStr string, req PartnerWithdrawRequest) (string, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return "", errors.New("ID partner tidak valid") }
+
+	// 1. Validasi Input Dasar
+	if req.Amount < minWithdrawalAmount {
+		return "", fmt.Errorf("minimal penarikan adalah Rp %.0f", minWithdrawalAmount)
+	}
+	// TODO: Validasi Payment Method ID
+	// TODO: Validasi Account Number (mungkin berdasarkan Payment Method)
+
+	// 2. Hitung Total dan Cek Saldo
+	totalDeduction := req.Amount + withdrawalFee
+	currentBalance, err := s.repo.GetPartnerCurrentBalanceByID(partnerID)
+	if err != nil {
+		return "", fmt.Errorf("gagal memeriksa saldo partner: %w", err)
+	}
+
+	if currentBalance < totalDeduction {
+		return "", errors.New("saldo partner tidak mencukupi untuk penarikan dan biaya admin")
+	}
+
+	// 3. Eksekusi Transaksi Database
+	orderID, err := s.repo.ExecutePartnerWithdrawTransaction(partnerID, totalDeduction, withdrawalFee, req.PaymentMethodID, req.AccountNumber)
+	if err != nil {
+		return "", fmt.Errorf("gagal memproses penarikan partner: %w", err)
+	}
+
+	// 4. (Nanti di sini) Panggil API Midtrans Disbursement
+	// log.Printf("TODO: Call Midtrans Disbursement API for Partner Withdraw Order ID: %s", orderID)
+
+	return orderID, nil
+}
+
+// --- Partner Top Up Service Method ---
+
+// RequestPartnerTopup memproses permintaan top up saldo partner (simulasi)
+func (s *PartnerService) RequestPartnerTopup(partnerIDStr string, req PartnerTopupRequest) (string, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return "", errors.New("ID partner tidak valid") }
+
+	// 1. Validasi Input Dasar
+	if req.Amount <= 0 {
+		return "", errors.New("jumlah top up harus lebih besar dari 0")
+	}
+	if req.Amount < minTopupAmount {
+		return "", fmt.Errorf("minimal top up adalah Rp %.0f", minTopupAmount)
+	}
+	// TODO: Validasi Payment Method ID
+
+	// 2. Pastikan wallet partner ada (fungsi ini otomatis membuat jika belum ada)
+	_, err = s.repo.FindOrCreateWalletByPartnerID(partnerID)
+	if err != nil {
+		return "", fmt.Errorf("gagal memeriksa/membuat wallet partner: %w", err)
+	}
+
+	// 3. Eksekusi Transaksi Database
+	orderID, err := s.repo.ExecutePartnerTopupTransaction(partnerID, req.Amount, req.PaymentMethodID)
+	if err != nil {
+		return "", fmt.Errorf("gagal memproses top up partner: %w", err)
+	}
+
+	// 4. (Nanti di sini) Generate Midtrans Snap Token/URL
+	// log.Printf("TODO: Generate Midtrans payment details for Partner Topup Order ID: %s", orderID)
+
+	return orderID, nil
+}
+
+// --- Partner Transfer Service Method ---
+
+func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTransferRequest) (string, error) {
+    senderPartnerID, err := strconv.Atoi(senderPartnerIDStr)
+    if err != nil { return "", errors.New("ID pengirim tidak valid") }
+
+    // 1. Validasi Input Dasar
+    if req.Amount <= 0 { return "", errors.New("jumlah transfer harus positif") }
+
+    // 2. Cari Penerima (Cek Partner dulu, baru User)
+    var recipientUserID *int
+    var recipientPartnerID *int
+
+    // Cek di tabel partners
+    recipientPartner, errP := s.repo.FindPartnerByEmail(req.RecipientEmail)
+    if errP != nil && errP != sql.ErrNoRows {
+        return "", errors.New("gagal mencari partner penerima")
+    }
+
+    if recipientPartner != nil {
+        // Ditemukan sebagai partner
+        if senderPartnerID == recipientPartner.ID { // Cek transfer ke diri sendiri
+            return "", errors.New("tidak bisa transfer ke diri sendiri")
+        }
+        // Pastikan wallet penerima ada
+         _, errWallet := s.repo.FindOrCreateWalletByPartnerID(recipientPartner.ID); if errWallet != nil {
+             return "", fmt.Errorf("gagal memeriksa/membuat wallet partner penerima: %w", errWallet)
+         }
+        id := recipientPartner.ID // Copy id ke var baru agar bisa diambil addressnya
+        recipientPartnerID = &id
+    } else {
+        // Jika tidak ketemu di partner, cek di tabel users
+        recipUserID, errU := s.userRepo.FindUserByEmail(req.RecipientEmail) // Panggil userRepo
+        if errU != nil && errU != sql.ErrNoRows {
+            return "", errors.New("gagal mencari user penerima")
+        }
+        if recipUserID == 0 { // Jika tidak ketemu di user juga
+            return "", errors.New("email penerima tidak ditemukan (baik user maupun partner)")
+        }
+        // Ditemukan sebagai user
+         // Pastikan wallet user penerima ada
+         _, errWallet := s.userRepo.FindOrCreateWalletByUserID(recipUserID); if errWallet != nil {
+             return "", fmt.Errorf("gagal memeriksa/membuat wallet user penerima: %w", errWallet)
+         }
+        recipientUserID = &recipUserID // Ambil addressnya
+    }
+
+
+    // 3. Pastikan wallet pengirim ada
+     _, err = s.repo.FindOrCreateWalletByPartnerID(senderPartnerID); if err != nil {
+         return "", fmt.Errorf("gagal memeriksa/membuat wallet pengirim: %w", err)
+     }
+
+
+    // 4. Eksekusi Transaksi Database
+    orderID, err := s.repo.ExecutePartnerTransferTransaction(senderPartnerID, req.Amount, recipientUserID, recipientPartnerID, req.RecipientEmail)
+    if err != nil {
+        // Error spesifik (poin tidak cukup, dll) sudah ditangani di repo
+        return "", fmt.Errorf("gagal memproses transfer: %w", err)
+    }
+
+    return orderID, nil
+}
+
+// --- Partner Conversion Service Methods ---
+
+func (s *PartnerService) ConvertXpToRp(partnerIDStr string, req PartnerConversionRequest) (*PartnerWallet, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	amountXp := int(req.Amount)
+	if float64(amountXp) != req.Amount || amountXp <= 0 {
+		return nil, errors.New("jumlah Xpoin harus berupa angka bulat positif")
+	}
+
+	amountRp := float64(amountXp) * conversionRateXpToRp
+
+	_, err = s.repo.FindOrCreateWalletByPartnerID(partnerID) // Pastikan wallet ada
+	if err != nil { return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err) }
+
+	updatedWallet, err := s.repo.ExecutePartnerConversionTransaction(
+		partnerID, -amountXp, amountRp,
+		"xp_to_rp", amountXp, amountRp, conversionRateXpToRp,
+	)
+	if err != nil { return nil, err }
+	return updatedWallet, nil
+}
+
+func (s *PartnerService) ConvertRpToXp(partnerIDStr string, req PartnerConversionRequest) (*PartnerWallet, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	amountRp := req.Amount
+	if amountRp <= 0 { return nil, errors.New("jumlah Rupiah harus positif") }
+
+	amountXp := int(math.Floor(amountRp / conversionRateXpToRp))
+	if amountXp <= 0 { return nil, errors.New("jumlah Rupiah terlalu kecil untuk dikonversi") }
+
+	actualAmountRpUsed := float64(amountXp) * conversionRateXpToRp
+
+	_, err = s.repo.FindOrCreateWalletByPartnerID(partnerID) // Pastikan wallet ada
+	if err != nil { return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err) }
+
+	updatedWallet, err := s.repo.ExecutePartnerConversionTransaction(
+		partnerID, amountXp, -actualAmountRpUsed,
+		"rp_to_xp", amountXp, actualAmountRpUsed, conversionRateXpToRp,
+	)
+	if err != nil { return nil, err }
+	return updatedWallet, nil
 }

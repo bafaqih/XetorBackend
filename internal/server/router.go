@@ -82,6 +82,19 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
         partnerRoutes.PUT("/profile", partnerHandler.UpdateProfile)
 		partnerRoutes.POST("/profile/photo", partnerHandler.UploadProfilePhoto)
 		partnerRoutes.PUT("/password", partnerHandler.ChangePassword)
+		partnerRoutes.DELETE("/account", partnerHandler.DeleteAccount)
+		partnerRoutes.GET("/wallet", partnerHandler.GetPartnerWallet)
+		partnerRoutes.GET("/statistics", partnerHandler.GetPartnerStatistics)
+		partnerRoutes.POST("/withdraw", partnerHandler.RequestPartnerWithdrawal)
+		partnerRoutes.POST("/topup", partnerHandler.RequestPartnerTopup)
+		partnerRoutes.POST("/transfer", partnerHandler.TransferXpoin)
+
+		 // Ruter untuk konversi Xpoin dan Rupiah
+		convertRoutes := partnerRoutes.Group("/convert")
+		{
+			convertRoutes.POST("/xp-to-rp", partnerHandler.ConvertXpToRp)
+			convertRoutes.POST("/rp-to-xp", partnerHandler.ConvertRpToXp)
+		}
 
 		// Ruter untuk alamat partner
 		partnerRoutes.GET("/address", partnerHandler.GetAddress)
@@ -100,6 +113,17 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			wastePriceRoutes.PUT("/:detail_id", partnerHandler.UpdateWastePrice)
 			wastePriceRoutes.DELETE("/:detail_id", partnerHandler.DeleteWastePrice)
 		}
+
+		 // Ruter untuk riwayat transaksi partner
+		partnerRoutes.GET("/transactions", partnerHandler.GetFinancialTransactionHistory)
+		
+		 // Ruter untuk riwayat deposit partner
+		depositRoutes := partnerRoutes.Group("/deposit")
+		{
+			depositRoutes.GET("/history", partnerHandler.GetDepositHistory)
+			// Endpoint POST /deposit/new akan dibuat nanti
+		}
+
     }
 
 

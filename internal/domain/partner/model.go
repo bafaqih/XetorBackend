@@ -138,3 +138,103 @@ type UpdateWastePriceRequest struct {
 	Unit  string  `form:"unit"`                      // Opsional
 	// Image *multipart.FileHeader `form:"image"` // Ditangani terpisah
 }
+
+// PartnerTransactionHistoryItem adalah format standar untuk riwayat transaksi finansial gabungan partner
+type PartnerTransactionHistoryItem struct {
+	ID          string         `json:"id"`           // ID unik (misal: "withdraw-5", "topup-2")
+	Type        string         `json:"type"`         // 'withdraw', 'topup', 'convert', 'transfer'
+	Amount      sql.NullString `json:"amount,omitempty"` // Jumlah (Rp)
+	Points      sql.NullInt32  `json:"points,omitempty"` // Jumlah Xpoin (untuk convert)
+	Status      string         `json:"status"`
+	Timestamp   time.Time      `json:"timestamp"`
+	Description string         `json:"description"` // Deskripsi singkat
+}
+
+// PartnerConversionHistory merepresentasikan data dari tabel partner_conversion_histories
+// (Perlu didefinisikan jika belum)
+type PartnerConversionHistory struct {
+	ID             int       `json:"id"`
+	PartnerID      int       `json:"partner_id"`
+	Type           string    `json:"type"`
+	AmountXp       int       `json:"amount_xp"`
+	AmountRp       string    `json:"amount_rp"`
+	Rate           float64   `json:"rate"`
+	ConversionTime time.Time `json:"conversion_time"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// DepositHistoryDetailItem merepresentasikan satu item sampah dalam satu transaksi deposit
+type DepositHistoryDetailItem struct {
+	ID           int            `json:"id"`
+	WasteTypeID  sql.NullInt32  `json:"waste_type_id,omitempty"`
+	WasteName    sql.NullString `json:"waste_name,omitempty"` // Nama dari waste_types
+	WasteWeight  sql.NullString `json:"waste_weight,omitempty"` // Berat (kg), sbg string
+	Xpoin        int            `json:"xpoin"`
+	Photo        sql.NullString `json:"photo,omitempty"` // URL Foto bukti
+	Notes        sql.NullString `json:"notes,omitempty"`
+	Status       string         `json:"status"`
+}
+
+// DepositHistoryHeader merepresentasikan satu transaksi deposit (header)
+type DepositHistoryHeader struct {
+	ID             int                        `json:"id"`
+	PartnerID      int                        `json:"partner_id"`
+	UserID         int                        `json:"user_id"`
+	UserName       sql.NullString             `json:"user_name,omitempty"` // Nama user penyetor
+	UserEmail      sql.NullString             `json:"user_email,omitempty"`// Email user penyetor
+	TotalWeight    sql.NullString             `json:"total_weight,omitempty"` // Berat total (kg), sbg string
+	TotalXpoin     int                        `json:"total_xpoin"`
+	TransactionTime time.Time                  `json:"transaction_time"`
+	CreatedAt      time.Time                  `json:"created_at"`
+	UpdatedAt      time.Time                  `json:"updated_at"`
+	Details        []DepositHistoryDetailItem `json:"details"` // Slice untuk menampung detail item
+}
+
+// PartnerWallet merepresentasikan data dari tabel partner_wallets
+type PartnerWallet struct {
+	ID        int       `json:"id"`
+	PartnerID int       `json:"partner_id"`
+	Balance   string    `json:"balance"` // Kirim sebagai string
+	Xpoin     int       `json:"xpoin"`   // Harus int
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PartnerStatistic merepresentasikan data dari tabel partner_statistics
+type PartnerStatistic struct {
+	ID          int       `json:"id"`
+	PartnerID   int       `json:"partner_id"`
+	Waste       string    `json:"waste"`       // Total sampah (kg), kirim sbg string
+	Revenue     string    `json:"revenue"`     // Total pendapatan (Rp), kirim sbg string
+	Customer    int       `json:"customer"`    // Jumlah unique customer
+	Transaction int       `json:"transaction"` // Jumlah transaksi
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PartnerWithdrawRequest data untuk request penarikan saldo partner
+type PartnerWithdrawRequest struct {
+	PaymentMethodID int     `json:"payment_method_id" binding:"required"`
+	AccountNumber   string  `json:"account_number" binding:"required"`
+	Amount          float64 `json:"amount" binding:"required,gt=0"`
+	AccountHolderName string `json:"account_holder_name"` // Opsional, tergantung bank
+}
+
+// PartnerTopupRequest data untuk request top up saldo partner
+type PartnerTopupRequest struct {
+	PaymentMethodID int     `json:"payment_method_id" binding:"required"`
+	Amount          float64 `json:"amount" binding:"required,gt=0"` // Jumlah > 0
+}
+
+// PartnerTransferRequest data untuk request transfer Xpoin dari partner
+type PartnerTransferRequest struct {
+	RecipientEmail string `json:"recipient_email" binding:"required,email"`
+	Amount         int    `json:"amount" binding:"required,gt=0"` // Xpoin > 0
+}
+
+// PartnerConversionRequest data umum untuk request konversi partner
+type PartnerConversionRequest struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"` // Jumlah Xp atau Rp
+}
+

@@ -415,3 +415,356 @@ func (h *PartnerHandler) DeleteWastePrice(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Detail harga sampah berhasil dihapus"})
 }
+
+// --- Partner Financial Transaction History Handler ---
+
+func (h *PartnerHandler) GetFinancialTransactionHistory(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists'
+	if !exists {
+		log.Println("GetFinancialTransactionHistory Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok'
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("GetFinancialTransactionHistory Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	transactions, err := h.service.GetFinancialTransactionHistory(partnerIDStrConv)
+	if err != nil {
+		// Service idealnya tidak return error utama kecuali fatal
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil riwayat transaksi finansial"})
+		return
+	}
+
+	// Kembalikan array kosong jika tidak ada transaksi
+	if transactions == nil {
+		transactions = []PartnerTransactionHistoryItem{}
+	}
+
+	c.JSON(http.StatusOK, transactions)
+}
+
+// --- Partner Deposit History Handler ---
+
+// GetDepositHistory menangani request get riwayat deposit sampah
+func (h *PartnerHandler) GetDepositHistory(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists'
+	if !exists {
+		log.Println("GetDepositHistory Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok'
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("GetDepositHistory Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	history, err := h.service.GetDepositHistory(partnerIDStrConv)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// Service sudah handle jika tidak ada riwayat (return array kosong)
+	c.JSON(http.StatusOK, history)
+}
+
+// DeleteAccount menangani request hapus akun partner
+func (h *PartnerHandler) DeleteAccount(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("DeleteAccount Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return
+	}
+	// Periksa dan konversi tipe 'ok' dengan benar
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("DeleteAccount Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return
+	}
+
+
+	err := h.service.DeleteAccount(partnerIDStrConv)
+	if err != nil {
+		if err.Error() == "partner tidak ditemukan" {
+			 c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			log.Printf("Internal error deleting partner account %s: %v", partnerIDStrConv, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus akun"})
+		}
+		return
+	}
+
+	// TODO: Mungkin perlu invalidate token JWT di sisi client/server? (Opsional)
+	c.JSON(http.StatusOK, gin.H{"message": "Akun partner berhasil dihapus"})
+}
+
+// GetPartnerWallet menangani request untuk mengambil data wallet partner
+func (h *PartnerHandler) GetPartnerWallet(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists'
+	if !exists {
+		log.Println("GetPartnerWallet Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok'
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("GetPartnerWallet Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	wallet, err := h.service.GetPartnerWallet(partnerIDStrConv)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, wallet)
+}
+
+// GetPartnerStatistics menangani request untuk mengambil data statistik partner
+func (h *PartnerHandler) GetPartnerStatistics(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("GetPartnerStatistics Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok' dengan benar
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("GetPartnerStatistics Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	stats, err := h.service.GetPartnerStatistics(partnerIDStrConv)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// --- Partner Withdraw Handler ---
+
+// RequestPartnerWithdrawal menangani request penarikan saldo partner
+func (h *PartnerHandler) RequestPartnerWithdrawal(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("RequestPartnerWithdrawal Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok' dengan benar
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("RequestPartnerWithdrawal Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	var req PartnerWithdrawRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	orderID, err := h.service.RequestPartnerWithdrawal(partnerIDStrConv, req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "minimal penarikan") || strings.Contains(errMsg, "saldo partner tidak mencukupi") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			log.Printf("Internal error requesting partner withdraw %s: %v", partnerIDStrConv, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses permintaan penarikan"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Permintaan penarikan partner sedang diproses",
+		"order_id": orderID,
+	})
+}
+
+// --- Partner Top Up Handler ---
+
+// RequestPartnerTopup menangani request top up saldo partner
+func (h *PartnerHandler) RequestPartnerTopup(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	if !exists {
+		log.Println("RequestPartnerTopup Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return
+	}
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("RequestPartnerTopup Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return
+	}
+
+	var req PartnerTopupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	orderID, err := h.service.RequestPartnerTopup(partnerIDStrConv, req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "minimal top up") || strings.Contains(errMsg, "harus lebih besar dari 0") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			log.Printf("Internal error requesting partner topup %s: %v", partnerIDStrConv, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses permintaan top up"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Top up partner berhasil ditambahkan (simulasi)",
+		"order_id": orderID,
+		// "payment_details": { ... } // Nanti
+	})
+}
+
+// --- Partner Transfer Handler ---
+
+// TransferXpoin menangani request transfer xpoin dari partner
+func (h *PartnerHandler) TransferXpoin(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("TransferXpoin Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok' dengan benar
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("TransferXpoin Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+
+	var req PartnerTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	orderID, err := h.service.TransferXpoin(partnerIDStrConv, req)
+	if err != nil {
+		errMsg := err.Error()
+		// Tangani error spesifik dari service/repo
+		if strings.Contains(errMsg, "tidak mencukupi") ||
+		   strings.Contains(errMsg, "tidak ditemukan") ||
+		   strings.Contains(errMsg, "diri sendiri") ||
+		   strings.Contains(errMsg, "harus positif") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			log.Printf("Internal error partner transfer %s: %v", partnerIDStrConv, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses transfer"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Transfer Xpoin berhasil",
+		"order_id": orderID,
+	})
+}
+
+// --- Partner Conversion Handlers ---
+
+func (h *PartnerHandler) ConvertXpToRp(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("ConvertXpToRp Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok' dengan benar
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("ConvertXpToRp Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	var req PartnerConversionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+	}
+
+	updatedWallet, err := h.service.ConvertXpToRp(partnerIDStrConv, req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "angka bulat") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+		}
+		log.Printf("Internal error partner ConvertXpToRp %s: %v", partnerIDStrConv, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Konversi Xpoin ke Rupiah berhasil",
+		"wallet": updatedWallet,
+	})
+}
+
+func (h *PartnerHandler) ConvertRpToXp(c *gin.Context) {
+	partnerIDInterface, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("ConvertRpToXp Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+	// Periksa dan konversi tipe 'ok' dengan benar
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("ConvertRpToXp Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return // Hentikan eksekusi
+	}
+
+	var req PartnerConversionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+	}
+
+	updatedWallet, err := h.service.ConvertRpToXp(partnerIDStrConv, req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "terlalu kecil") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+		}
+		log.Printf("Internal error partner ConvertRpToXp %s: %v", partnerIDStrConv, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Konversi Rupiah ke Xpoin berhasil",
+		"wallet": updatedWallet,
+	})
+}

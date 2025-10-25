@@ -28,7 +28,7 @@ func main() {
 
 	// Komponen Partner
 	partnerRepo := repository.NewPartnerRepository(db)
-	partnerService := partner.NewPartnerService(partnerRepo)
+	partnerService := partner.NewPartnerService(partnerRepo, userRepo)
 	partnerHandler := partner.NewPartnerHandler(partnerService)
 
 	// Komponen Admin
