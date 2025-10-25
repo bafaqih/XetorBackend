@@ -77,9 +77,29 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 	partnerRoutes := r.Group("/partner")
     partnerRoutes.Use(AuthMiddleware(), RoleCheckMiddleware("partner"))
     {
+		 // Ruter untuk profil partner
         partnerRoutes.GET("/profile", partnerHandler.GetProfile)
         partnerRoutes.PUT("/profile", partnerHandler.UpdateProfile)
 		partnerRoutes.POST("/profile/photo", partnerHandler.UploadProfilePhoto)
+		partnerRoutes.PUT("/password", partnerHandler.ChangePassword)
+
+		// Ruter untuk alamat partner
+		partnerRoutes.GET("/address", partnerHandler.GetAddress)
+		partnerRoutes.PUT("/address", partnerHandler.UpdateAddress)
+
+		// Ruter untuk jadwal operasional partner
+		partnerRoutes.GET("/schedule", partnerHandler.GetSchedule)
+		partnerRoutes.PUT("/schedule", partnerHandler.UpdateSchedule)
+
+		// Ruter untuk harga sampah
+		wastePriceRoutes := partnerRoutes.Group("/waste-prices")
+		{
+			wastePriceRoutes.POST("/", partnerHandler.CreateWastePrice)
+			wastePriceRoutes.GET("/", partnerHandler.GetAllWastePrices)
+			wastePriceRoutes.GET("/:detail_id", partnerHandler.GetWastePriceByID)
+			wastePriceRoutes.PUT("/:detail_id", partnerHandler.UpdateWastePrice)
+			wastePriceRoutes.DELETE("/:detail_id", partnerHandler.DeleteWastePrice)
+		}
     }
 
 
