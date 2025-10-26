@@ -320,8 +320,15 @@ func (h *PartnerHandler) CreateWastePrice(c *gin.Context) {
 		return
 	}
 
-	// Ambil file gambar (opsional)
-	imageFile, _ := c.FormFile("image") // Abaikan error jika tidak ada file
+	wasteDetailIDStr := c.PostForm("waste_detail_id")
+	wasteDetailID, errConv := strconv.Atoi(wasteDetailIDStr)
+	if errConv != nil || wasteDetailID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "waste_detail_id tidak valid atau kosong"})
+		return
+	}
+	req.WasteDetailID = wasteDetailID // Masukkan ke struct
+
+	imageFile, _ := c.FormFile("image")
 
 	detail, err := h.service.CreateWastePrice(partnerIDStr.(string), req, imageFile)
 	if err != nil {
@@ -381,8 +388,23 @@ func (h *PartnerHandler) UpdateWastePrice(c *gin.Context) {
 		 }
 	}
 
+	wasteDetailIDStr := c.PostForm("waste_detail_id")
+	if wasteDetailIDStr != "" { // Hanya proses jika dikirim
+		wasteDetailID, errConv := strconv.Atoi(wasteDetailIDStr)
+		if errConv != nil || wasteDetailID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "waste_detail_id tidak valid"})
+			return
+		}
+		req.WasteDetailID = &wasteDetailID // Set pointer di struct
+	} else {
+		req.WasteDetailID = nil // Pastikan nil jika tidak dikirim
+	}
 
 	imageFile, _ := c.FormFile("image")
+	if req.Name == "" && req.Price <= 0 && req.Unit == "" && req.WasteDetailID == nil && imageFile == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data untuk diupdate"})
+		return
+	}
 
 	updatedDetail, err := h.service.UpdateWastePrice(detailID, partnerIDStr.(string), req, imageFile) // <-- Kirim req baru
 	if err != nil {

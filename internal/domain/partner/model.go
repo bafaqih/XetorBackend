@@ -113,6 +113,7 @@ func DaysOpenToString(days []string) sql.NullString {
 type PartnerWastePriceDetail struct {
 	ID                   int            `json:"id"`
 	PartnerWastePriceID  int            `json:"partner_waste_price_id"` // FK ke header
+	WasteDetailID        sql.NullInt32  `json:"waste_detail_id,omitempty"`
 	Image                sql.NullString `json:"image,omitempty"`        // URL Gambar Cloudinary
 	Name                 string         `json:"name"`                   // Nama jenis sampah (misal: Botol PET)
 	Price                string         `json:"price"`                  // Harga (Rp), kirim sebagai string
@@ -128,6 +129,7 @@ type WastePriceRequest struct {
 	Name  string  `form:"name" binding:"required"`
 	Price float64 `form:"price" binding:"required,gt=0"`
 	Unit  string  `form:"unit" binding:"required"`
+	WasteDetailID int     `form:"waste_detail_id" binding:"required"`
 	// Image *multipart.FileHeader `form:"image"` // Ditangani terpisah di handler
 }
 
@@ -136,6 +138,7 @@ type UpdateWastePriceRequest struct {
 	Name  string  `form:"name"`                      // Opsional
 	Price float64 `form:"price" binding:"omitempty,gt=0"` // Opsional, tapi jika ada > 0
 	Unit  string  `form:"unit"`                      // Opsional
+	WasteDetailID *int    `form:"waste_detail_id"`
 	// Image *multipart.FileHeader `form:"image"` // Ditangani terpisah
 }
 

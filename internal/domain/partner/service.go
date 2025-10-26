@@ -470,32 +470,26 @@ func (s *PartnerService) CreateWastePrice(partnerIDStr string, req WastePriceReq
 	// Dapatkan atau buat header
 	headerID, err := s.repo.FindOrCreateWastePriceHeader(partnerID)
 	if err != nil { return nil, err }
-
-	// Hitung Xpoin
 	xpoin := calculateXpoin(req.Price)
 
-	// Siapkan data detail (Image URL diisi setelah upload)
 	detail := &PartnerWastePriceDetail{
 		PartnerWastePriceID: headerID,
+		WasteDetailID:       sql.NullInt32{Int32: int32(req.WasteDetailID), Valid: true}, // Set WasteDetailID
 		Name:                req.Name,
-		Price:               fmt.Sprintf("%.2f", req.Price), // Simpan sbg string di struct
+		Price:               fmt.Sprintf("%.2f", req.Price),
 		Unit:                req.Unit,
 		Xpoin:               xpoin,
 	}
 
-	// Upload gambar jika ada
-	imageURL, err := s.uploadWastePriceImage(partnerID, 0, imageFile) // detailID 0 karena belum dibuat
+	imageURL, err := s.uploadWastePriceImage(partnerID, 0, imageFile)
 	if err != nil { return nil, err }
-	if imageURL != "" {
-		detail.Image = sql.NullString{String: imageURL, Valid: true}
-	}
+	if imageURL != "" { detail.Image = sql.NullString{String: imageURL, Valid: true} }
 
-
-	// Simpan detail ke DB
 	err = s.repo.CreateWastePriceDetail(detail)
 	if err != nil { return nil, err }
 
-	return detail, nil
+	// Ambil data lagi untuk response agar WasteDetailID terisi jika NULL
+    return s.repo.GetWastePriceDetailByID(detail.ID, partnerID)
 }
 
 // GetAllWastePrices mengambil semua item harga sampah partner
@@ -534,22 +528,23 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 
 	// Siapkan data update
 	updateData := &PartnerWastePriceDetail{
-		ID: detailID, // ID untuk WHERE clause
+		ID:    detailID, // Untuk repo
+		Image: sql.NullString{Valid: false}, // Default: jangan update image
 	}
-	needsUpdate := false // Flag untuk cek apakah ada yg diupdate
+	needsUpdate := false
 
-	if req.Name != "" {
-		updateData.Name = req.Name
+	if req.Name != "" { updateData.Name = req.Name; needsUpdate = true }
+	if req.Unit != "" { updateData.Unit = req.Unit; needsUpdate = true }
+	if req.WasteDetailID != nil { // Jika WasteDetailID dikirim
+		// TODO: Validasi apakah *req.WasteDetailID valid?
+		updateData.WasteDetailID = sql.NullInt32{Int32: int32(*req.WasteDetailID), Valid: true}
 		needsUpdate = true
 	}
 	if req.Price > 0 {
-		updateData.Price = fmt.Sprintf("%.2f", req.Price) // Update price
-		updateData.Xpoin = calculateXpoin(req.Price)      // Hitung ulang Xpoin
+		updateData.Price = fmt.Sprintf("%.2f", req.Price) // Update harga
+		updateData.Xpoin = calculateXpoin(req.Price)      // Hitung ulang Xpoin HANYA jika harga diupdate
 		needsUpdate = true
-	}
-	if req.Unit != "" {
-		updateData.Unit = req.Unit
-		needsUpdate = true
+	} else {
 	}
 
 	imageURL, err := s.uploadWastePriceImage(partnerID, detailID, imageFile)

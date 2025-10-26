@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
+	
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/domain/partner"
 )
@@ -405,8 +405,8 @@ func (r *PartnerRepository) FindOrCreateWastePriceHeader(partnerID int) (int, er
 func (r *PartnerRepository) CreateWastePriceDetail(detail *partner.PartnerWastePriceDetail) error {
 	query := `
 		INSERT INTO partner_waste_price_details
-			(partner_waste_price_id, image, name, price, unit, xpoin)
-		VALUES ($1, $2, $3, $4, $5, $6)
+			(partner_waste_price_id, waste_detail_id, image, name, price, unit, xpoin) -- Tambah waste_detail_id
+		VALUES ($1, $2, $3, $4, $5, $6, $7) -- Tambah $2
 		RETURNING id, created_at, updated_at`
 
 	// Konversi price string ke float64 untuk disimpan sbg DECIMAL
@@ -416,8 +416,14 @@ func (r *PartnerRepository) CreateWastePriceDetail(detail *partner.PartnerWasteP
 		return errors.New("format harga tidak valid")
 	}
 
+	var wasteDetailID sql.NullInt32
+	if detail.WasteDetailID.Valid {
+		wasteDetailID = detail.WasteDetailID
+	}
+
 	err = r.db.QueryRow(query,
-		detail.PartnerWastePriceID, detail.Image, detail.Name, priceFloat, detail.Unit, detail.Xpoin,
+		detail.PartnerWastePriceID, wasteDetailID, detail.Image, detail.Name, // Masukkan wasteDetailID
+		priceFloat, detail.Unit, detail.Xpoin,
 	).Scan(&detail.ID, &detail.CreatedAt, &detail.UpdatedAt)
 
 	if err != nil {
@@ -436,7 +442,7 @@ func (r *PartnerRepository) GetWastePriceDetailsByPartnerID(partnerID int) ([]pa
 	}
 
 	query := `
-		SELECT id, partner_waste_price_id, image, name, price, unit, xpoin, created_at, updated_at
+		SELECT id, partner_waste_price_id, waste_detail_id, image, name, price, unit, xpoin, created_at, updated_at -- Tambah waste_detail_id
 		FROM partner_waste_price_details
 		WHERE partner_waste_price_id = $1
 		ORDER BY name ASC`
@@ -453,8 +459,8 @@ func (r *PartnerRepository) GetWastePriceDetailsByPartnerID(partnerID int) ([]pa
 		var pd partner.PartnerWastePriceDetail
 		var priceDB float64 // Baca DECIMAL sebagai float
 		if err := rows.Scan(
-			&pd.ID, &pd.PartnerWastePriceID, &pd.Image, &pd.Name, &priceDB,
-			&pd.Unit, &pd.Xpoin, &pd.CreatedAt, &pd.UpdatedAt,
+			&pd.ID, &pd.PartnerWastePriceID, &pd.WasteDetailID, &pd.Image, &pd.Name, // Scan waste_detail_id
+			&priceDB, &pd.Unit, &pd.Xpoin, &pd.CreatedAt, &pd.UpdatedAt,
 		); err != nil {
 			log.Printf("Error scanning waste price detail row for partner ID %d: %v", partnerID, err)
 			return nil, err
@@ -473,14 +479,14 @@ func (r *PartnerRepository) GetWastePriceDetailByID(detailID int, partnerID int)
 	}
 
 	query := `
-		SELECT id, partner_waste_price_id, image, name, price, unit, xpoin, created_at, updated_at
+		SELECT id, partner_waste_price_id, waste_detail_id, image, name, price, unit, xpoin, created_at, updated_at
 		FROM partner_waste_price_details
 		WHERE id = $1 AND partner_waste_price_id = $2`
 
 	var pd partner.PartnerWastePriceDetail
 	var priceDB float64
 	err = r.db.QueryRow(query, detailID, headerID).Scan(
-		&pd.ID, &pd.PartnerWastePriceID, &pd.Image, &pd.Name, &priceDB,
+		&pd.ID, &pd.PartnerWastePriceID, &pd.WasteDetailID, &pd.Image, &pd.Name, &priceDB,
 		&pd.Unit, &pd.Xpoin, &pd.CreatedAt, &pd.UpdatedAt,
 	)
 	if err != nil {
@@ -504,48 +510,30 @@ func (r *PartnerRepository) UpdateWastePriceDetail(detailID int, partnerID int, 
 	fields := []string{}
 	args := []interface{}{}
 	argId := 1
+	updateXpoin := false
 
 	// Bangun query update dinamis
-	if detail.Image.Valid {
-		fields = append(fields, fmt.Sprintf("image = $%d", argId))
-		args = append(args, detail.Image)
-		argId++
-	}
-	if detail.Name != "" {
-		fields = append(fields, fmt.Sprintf("name = $%d", argId))
-		args = append(args, detail.Name)
-		argId++
-	}
+	if detail.Image.Valid { fields = append(fields, fmt.Sprintf("image = $%d", argId)); args = append(args, detail.Image); argId++ }
+	if detail.Name != "" { fields = append(fields, fmt.Sprintf("name = $%d", argId)); args = append(args, detail.Name); argId++ }
 	if detail.Price != "" {
 		priceFloat, err := strconv.ParseFloat(detail.Price, 64)
-		if err != nil {
-			return errors.New("format harga tidak valid")
-		}
-		fields = append(fields, fmt.Sprintf("price = $%d", argId))
-		args = append(args, priceFloat)
-		argId++
+		if err != nil { return errors.New("format harga tidak valid") }
+		fields = append(fields, fmt.Sprintf("price = $%d", argId)); args = append(args, priceFloat); argId++
+		updateXpoin = true // Xpoin harus diupdate jika harga berubah
 	}
-	if detail.Unit != "" {
-		fields = append(fields, fmt.Sprintf("unit = $%d", argId))
-		args = append(args, detail.Unit)
-		argId++
+	if detail.Unit != "" { fields = append(fields, fmt.Sprintf("unit = $%d", argId)); args = append(args, detail.Unit); argId++ }
+	if detail.WasteDetailID.Valid { // Update waste_detail_id jika dikirim
+	    fields = append(fields, fmt.Sprintf("waste_detail_id = $%d", argId));
+	    args = append(args, detail.WasteDetailID);
+	    argId++
 	}
-	// Selalu update xpoin jika price diupdate atau xpoin dikirim (meskipun 0)
-	fields = append(fields, fmt.Sprintf("xpoin = $%d", argId))
-	args = append(args, detail.Xpoin)
-	argId++
 
-	if len(fields) <= 1 { // Jika hanya xpoin atau tidak ada field lain
-		if detail.Name == "" && detail.Price == "" && detail.Unit == "" && !detail.Image.Valid {
-			log.Println("UpdateWastePriceDetail: No valid fields to update other than xpoin.")
-			// Jika hanya Xpoin yg diupdate, tetap jalankan query
-			if len(fields) == 1 && strings.HasPrefix(fields[0], "xpoin") {
-				// Biarkan query jalan
-			} else {
-				return nil // Tidak ada yg diupdate
-			}
-		}
+	// Hanya update xpoin jika harga diupdate ATAU jika xpoin di struct detail diisi manual (jarang terjadi)
+	if updateXpoin {
+		fields = append(fields, fmt.Sprintf("xpoin = $%d", argId)); args = append(args, detail.Xpoin); argId++
 	}
+
+	if len(fields) == 0 { return nil /* No fields to update */ }
 
 	args = append(args, detailID, headerID) // ID Detail dan ID Header untuk WHERE
 
@@ -557,10 +545,7 @@ func (r *PartnerRepository) UpdateWastePriceDetail(detailID int, partnerID int, 
 		log.Printf("Error updating waste price detail ID %d: %v", detailID, err)
 		return errors.New("gagal mengupdate detail harga sampah")
 	}
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return sql.ErrNoRows /* Not found or not owned */
-	}
+	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return sql.ErrNoRows }
 	log.Printf("Waste price detail updated for ID: %d", detailID)
 	return nil
 }
@@ -1233,4 +1218,3 @@ func (r *PartnerRepository) ExecutePartnerConversionTransaction(
 	log.Printf("Partner conversion successful for partner ID %d: %s", partnerID, conversionType)
 	return &updatedWallet, err // err akan nil jika commit berhasil
 }
-
