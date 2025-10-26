@@ -21,6 +21,7 @@ import (
 	"xetor.id/backend/internal/auth" // Import JWT generator
 	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/domain/user"
+	"xetor.id/backend/internal/temporary_token"
 )
 
 const conversionRateRpToXp = 1.0 / 5.0 // 1 Rp = 0.2 Xp
@@ -83,13 +84,21 @@ type PartnerRepository interface {
 	ExecutePartnerConversionTransaction(partnerID int, xpoinChange int, balanceChange float64, conversionType string, amountXpInvolved int, amountRpInvolved float64, rate float64) (*PartnerWallet, error)
 }
 
-type PartnerService struct {
-	repo PartnerRepository
-	userRepo user.Repository
+type UserRepositoryForPartner interface {
+	 FindByEmail(email string) (*user.User, error)
+     FindOrCreateWalletByUserID(userID int) (*user.UserWallet, error)
+	 FindUserIDByEmail(email string) (int, error)
+     FindByID(id int) (*user.User, error)
 }
 
-func NewPartnerService(repo PartnerRepository, userRepo user.Repository) *PartnerService {
-	return &PartnerService{repo: repo, userRepo: userRepo}
+type PartnerService struct {
+	repo PartnerRepository
+	userRepo UserRepositoryForPartner
+	tokenStore *temporary_token.TokenStore
+}
+
+func NewPartnerService(repo PartnerRepository, userRepo UserRepositoryForPartner, tokenStore *temporary_token.TokenStore) *PartnerService {
+	return &PartnerService{repo: repo, userRepo: userRepo, tokenStore: tokenStore}
 }
 
 // RegisterPartner memproses registrasi partner baru
@@ -771,7 +780,7 @@ func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTra
         recipientPartnerID = &id
     } else {
         // Jika tidak ketemu di partner, cek di tabel users
-        recipUserID, errU := s.userRepo.FindUserByEmail(req.RecipientEmail) // Panggil userRepo
+        recipUserID, errU := s.userRepo.FindUserIDByEmail(req.RecipientEmail) // Panggil userRepo
         if errU != nil && errU != sql.ErrNoRows {
             return "", errors.New("gagal mencari user penerima")
         }
@@ -846,4 +855,59 @@ func (s *PartnerService) ConvertRpToXp(partnerIDStr string, req PartnerConversio
 	)
 	if err != nil { return nil, err }
 	return updatedWallet, nil
+}
+
+// --- Verify QR Token Service Method ---
+
+// VerifyDepositQrToken memvalidasi token QR dan mengembalikan data user
+func (s *PartnerService) VerifyDepositQrToken(req VerifyQrTokenRequest) (*VerifyQrTokenResponse, error) {
+	// 1. Validasi token menggunakan TokenStore
+	userID, err := s.tokenStore.ValidateToken(req.Token)
+	if err != nil {
+		// Error bisa "token tidak ditemukan" atau "token sudah kedaluwarsa"
+		return nil, err
+	}
+
+	// 2. Jika token valid, ambil data user dari UserRepository
+	userData, err := s.userRepo.FindByID(userID) // Gunakan fungsi FindByID yang sudah ada di userRepo
+	if err != nil {
+		log.Printf("Error fetching user data after QR token validation for user ID %d: %v", userID, err)
+		return nil, errors.New("gagal mengambil data pengguna terkait token")
+	}
+	if userData == nil {
+		return nil, errors.New("pengguna terkait token tidak ditemukan")
+	}
+
+	// 3. Siapkan respons
+	response := &VerifyQrTokenResponse{
+		UserID:   userData.ID,
+		Fullname: userData.Fullname,
+		Email:    userData.Email,
+	}
+
+	return response, nil
+}
+
+// --- Check User Service Method ---
+
+// CheckUserByEmail mencari user berdasarkan email
+func (s *PartnerService) CheckUserByEmail(req CheckUserRequest) (*CheckUserResponse, error) {
+    // Panggil userRepo yang sudah di-inject
+    userData, err := s.userRepo.FindByEmail(req.Email)
+    if err != nil {
+        // Hanya log error teknis, jangan kirim detailnya
+        log.Printf("Error checking user by email %s: %v", req.Email, err)
+        return nil, errors.New("gagal memeriksa pengguna")
+    }
+    if userData == nil {
+        return nil, errors.New("pengguna dengan email tersebut tidak ditemukan")
+    }
+
+    // Siapkan respons
+    response := &CheckUserResponse{
+        UserID:   userData.ID,
+        Fullname: userData.Fullname,
+        Email:    userData.Email,
+    }
+    return response, nil
 }

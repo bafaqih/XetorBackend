@@ -63,7 +63,7 @@ type Repository interface {
 	ExecuteTopupTransaction(userID int, amountToAdd float64, paymentMethodID int) (string, error)
 
 	// Transfer methods
-	FindUserByEmail(email string) (int, error)
+	FindUserIDByEmail(email string) (int, error)
 	ExecuteTransferTransaction(senderUserID, recipientUserID, amount int, recipientEmail string) (string, error)
 
 	// Conversion methods
@@ -413,7 +413,7 @@ func (s *Service) TransferXpoin(senderUserIDStr string, req TransferRequest) (st
 	// TODO: Mungkin perlu validasi format email lagi di sini? (meskipun binding sudah)
 
 	// 2. Cari ID Penerima berdasarkan Email
-	recipientUserID, err := s.repo.FindUserByEmail(req.RecipientEmail)
+	recipientUserID, err := s.repo.FindUserIDByEmail(req.RecipientEmail)
 	if err != nil {
 		return "", errors.New("gagal mencari penerima")
 	}

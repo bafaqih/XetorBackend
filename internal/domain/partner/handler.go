@@ -768,3 +768,68 @@ func (h *PartnerHandler) ConvertRpToXp(c *gin.Context) {
 		"wallet": updatedWallet,
 	})
 }
+
+// --- Verify QR Token Handler ---
+
+// VerifyDepositQrToken menangani request validasi token QR deposit
+func (h *PartnerHandler) VerifyDepositQrToken(c *gin.Context) {
+	_, exists := c.Get("entityID")
+	if !exists {
+		log.Println("VerifyDepositQrToken Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return
+	}
+
+	var req VerifyQrTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token tidak boleh kosong"})
+		return
+	}
+
+	userData, err := h.service.VerifyDepositQrToken(req)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "tidak ditemukan") || strings.Contains(errMsg, "kedaluwarsa") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}) // Kirim pesan error spesifik
+		} else {
+			log.Printf("Internal error verifying QR token: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memvalidasi token QR"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, userData) // Kirim data user jika token valid
+}
+
+// --- Check User Handler ---
+
+// CheckUserByEmail menangani request pengecekan user berdasarkan email
+func (h *PartnerHandler) CheckUserByEmail(c *gin.Context) {
+	_, exists := c.Get("entityID")
+	// Periksa 'exists' dengan benar
+	if !exists {
+		log.Println("CheckUserByEmail Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return // Hentikan eksekusi
+	}
+
+	var req CheckUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid atau kosong"})
+		return
+	}
+
+	userData, err := h.service.CheckUserByEmail(req)
+	if err != nil {
+		errMsg := err.Error()
+		if errMsg == "pengguna dengan email tersebut tidak ditemukan" {
+			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
+		} else {
+			log.Printf("Internal error checking user by email: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memeriksa pengguna"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, userData) // Kirim data user jika ditemukan
+}

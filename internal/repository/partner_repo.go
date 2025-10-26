@@ -1233,3 +1233,4 @@ func (r *PartnerRepository) ExecutePartnerConversionTransaction(
 	log.Printf("Partner conversion successful for partner ID %d: %s", partnerID, conversionType)
 	return &updatedWallet, err // err akan nil jika commit berhasil
 }
+

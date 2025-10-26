@@ -238,3 +238,27 @@ type PartnerConversionRequest struct {
 	Amount float64 `json:"amount" binding:"required,gt=0"` // Jumlah Xp atau Rp
 }
 
+// VerifyQrTokenRequest data yang dikirim partner saat scan QR
+type VerifyQrTokenRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// VerifyQrTokenResponse data user yang dikirim kembali jika token valid
+type VerifyQrTokenResponse struct {
+	UserID   int    `json:"user_id"`
+	Fullname string `json:"fullname"`
+	Email    string `json:"email"`
+}
+
+// CheckUserRequest data yang dikirim partner untuk cek user
+type CheckUserRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// CheckUserResponse data user yang dikirim kembali jika ditemukan
+// (Sama seperti VerifyQrTokenResponse)
+type CheckUserResponse struct {
+	UserID   int    `json:"user_id"`
+	Fullname string `json:"fullname"`
+	Email    string `json:"email"`
+}

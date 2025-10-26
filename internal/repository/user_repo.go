@@ -667,7 +667,7 @@ func (r *UserRepository) ExecuteTopupTransaction(userID int, amountToAdd float64
 // --- Transfer Xpoin Functions ---
 
 // FindUserByEmail mencari user berdasarkan email (hanya butuh ID untuk transfer)
-func (r *UserRepository) FindUserByEmail(email string) (int, error) {
+func (r *UserRepository) FindUserIDByEmail(email string) (int, error) {
 	query := "SELECT id FROM users WHERE email = $1"
 	var userID int
 	err := r.db.QueryRow(query, email).Scan(&userID)
@@ -675,7 +675,7 @@ func (r *UserRepository) FindUserByEmail(email string) (int, error) {
 		if err == sql.ErrNoRows {
 			return 0, nil // User tidak ditemukan, bukan error teknis
 		}
-		log.Printf("Error finding user by email %s: %v", email, err)
+		log.Printf("Error finding user ID by email %s: %v", email, err)
 		return 0, err // Error teknis
 	}
 	return userID, nil

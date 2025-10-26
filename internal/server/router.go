@@ -121,7 +121,9 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 		depositRoutes := partnerRoutes.Group("/deposit")
 		{
 			depositRoutes.GET("/history", partnerHandler.GetDepositHistory)
-			// Endpoint POST /deposit/new akan dibuat nanti
+			depositRoutes.POST("/verify-qr-token", partnerHandler.VerifyDepositQrToken)
+			depositRoutes.POST("/check-user", partnerHandler.CheckUserByEmail)
+			// depositRoutes.POST("/create", partnerHandler.CreateDeposit)
 		}
 
     }
