@@ -9,6 +9,7 @@ import (
 	"strings"
 	"strconv"
 	"errors"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/domain/user"
@@ -909,4 +910,60 @@ func (r *UserRepository) UpdateUserPhotoURL(id int, photoURL string) error {
 	}
 	log.Printf("User photo URL updated for ID: %d", id)
 	return nil
+}
+
+// --- User Deposit Related Functions ---
+
+// AddDepositHistory: Pastikan fungsi ini ada
+func (r *UserRepository) AddDepositHistory(userID, partnerID, totalPoints int, depositTime time.Time) (int, error) { // <-- Ubah return type
+	query := `
+		INSERT INTO user_deposit_histories (user_id, partner_id, total_points, status, deposit_time)
+		VALUES ($1, $2, $3, 'Completed', $4)
+		RETURNING id` // <-- Tambahkan RETURNING id
+
+	var userDepositHistoryID int // <-- Variabel untuk menampung ID
+	err := r.db.QueryRow(query, userID, partnerID, totalPoints, depositTime).Scan(&userDepositHistoryID) // <-- Scan ID-nya
+	if err != nil {
+		log.Printf("Error inserting user deposit history for user ID %d: %v", userID, err)
+		return 0, errors.New("gagal mencatat riwayat deposit pengguna")
+	}
+	return userDepositHistoryID, nil // <-- Kembalikan ID
+}
+
+// UpdateUserWalletOnDeposit: Pastikan fungsi ini ada
+func (r *UserRepository) UpdateUserWalletOnDeposit(userID, pointsToAdd int) error {
+	query := `UPDATE user_wallets SET xpoin = xpoin + $1, updated_at = NOW() WHERE user_id = $2`
+	result, err := r.db.Exec(query, pointsToAdd, userID);
+    if err != nil { return errors.New("gagal update wallet user") }
+	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return errors.New("wallet user tidak ditemukan") }
+	return nil
+}
+
+// GetWasteDetailFactors: Pastikan fungsi ini ada dan mengembalikan map[int]user.ImpactFactors
+func (r *UserRepository) GetWasteDetailFactors(wasteDetailIDs []int) (map[int]user.ImpactFactors, error) { // Return type dari model user
+    if len(wasteDetailIDs) == 0 { return make(map[int]user.ImpactFactors), nil }
+    placeholders := make([]string, len(wasteDetailIDs)); args := make([]interface{}, len(wasteDetailIDs))
+    for i, id := range wasteDetailIDs { placeholders[i] = fmt.Sprintf("$%d", i+1); args[i] = id }
+    query := fmt.Sprintf(`SELECT id, COALESCE(energy_factor, 0), COALESCE(co2_factor, 0), COALESCE(water_factor, 0), COALESCE(tree_factor, 0) FROM waste_details WHERE id IN (%s)`, strings.Join(placeholders, ","))
+
+    rows, err := r.db.Query(query, args...); if err != nil { return nil, err }
+    defer rows.Close()
+
+    factorsMap := make(map[int]user.ImpactFactors) // Gunakan struct dari model user
+    for rows.Next() {
+        var detailID int
+        var factors user.ImpactFactors // Gunakan struct dari model user
+        if err := rows.Scan(&detailID, &factors.Energy, &factors.CO2, &factors.Water, &factors.Tree); err != nil { return nil, err }
+        factorsMap[detailID] = factors
+    }
+    return factorsMap, rows.Err()
+}
+
+// UpdateUserStatisticsOnDeposit: Pastikan fungsi ini ada dan benar (tree jadi int)
+func (r *UserRepository) UpdateUserStatisticsOnDeposit(userID int, totalWaste float64, energySaved, co2Saved, waterSaved float64, treesSaved int) error {
+    query := `UPDATE user_statistics SET waste = waste + $1, energy = energy + $2, co2 = co2 + $3, water = water + $4, tree = tree + $5, updated_at = NOW() WHERE user_id = $6`
+    result, err := r.db.Exec(query, totalWaste, energySaved, co2Saved, waterSaved, treesSaved, userID);
+    if err != nil { return errors.New("gagal update statistik user") }
+    rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return errors.New("statistik user tidak ditemukan") }
+    return nil
 }

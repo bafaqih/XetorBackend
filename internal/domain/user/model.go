@@ -148,3 +148,11 @@ type UpdateUserProfileRequest struct {
 	Email    string `json:"email"` // Tanpa validasi email unik di binding, cek di service/repo
 	Phone    string `json:"phone"` // Bisa string kosong jika ingin menghapus
 }
+
+// ImpactFactors struct helper untuk menyimpan faktor dampak lingkungan per jenis sampah
+type ImpactFactors struct {
+	Energy float64 // Contoh: kWh per kg
+	CO2    float64 // Contoh: kg CO2 per kg
+	Water  float64 // Contoh: Liter per kg
+	Tree   float64 // Contoh: Pohon per kg (nanti dibulatkan)
+}

@@ -2,8 +2,8 @@ package partner
 
 import (
 	"database/sql"
-	"time"
 	"strings"
+	"time"
 )
 
 // Partner merepresentasikan data partner dari tabel partners
@@ -34,8 +34,8 @@ type PartnerLoginRequest struct {
 
 // PartnerLoginResponse data respons setelah login berhasil
 type PartnerLoginResponse struct {
-	Token   string   `json:"token"`
-	Status  string   `json:"status"`
+	Token  string `json:"token"`
+	Status string `json:"status"`
 }
 
 // UpdatePartnerProfileRequest data untuk update profil partner
@@ -77,9 +77,9 @@ type UpdatePartnerAddressRequest struct {
 type PartnerSchedule struct {
 	ID              int       `json:"id"`
 	PartnerID       int       `json:"partner_id"`
-	DaysOpen        []string  `json:"days_open"` // Kirim sebagai array string ["Senin", "Selasa"]
-	OpenTime        string    `json:"open_time"`  // Format "HH:MM"
-	CloseTime       string    `json:"close_time"` // Format "HH:MM"
+	DaysOpen        []string  `json:"days_open"`        // Kirim sebagai array string ["Senin", "Selasa"]
+	OpenTime        string    `json:"open_time"`        // Format "HH:MM"
+	CloseTime       string    `json:"close_time"`       // Format "HH:MM"
 	OperatingStatus string    `json:"operating_status"` // "Open" atau "Closed"
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -87,9 +87,9 @@ type PartnerSchedule struct {
 
 // UpdateScheduleRequest data untuk mengupdate seluruh jadwal operasional (struktur baru)
 type UpdateScheduleRequest struct {
-	DaysOpen        []string `json:"days_open"` // Array hari buka ["Senin", "Selasa", ...]
-	OpenTime        string   `json:"open_time"` // Format "HH:MM"
-	CloseTime       string   `json:"close_time"` // Format "HH:MM"
+	DaysOpen        []string `json:"days_open"`        // Array hari buka ["Senin", "Selasa", ...]
+	OpenTime        string   `json:"open_time"`        // Format "HH:MM"
+	CloseTime       string   `json:"close_time"`       // Format "HH:MM"
 	OperatingStatus string   `json:"operating_status"` // "Open" atau "Closed"
 }
 
@@ -111,41 +111,41 @@ func DaysOpenToString(days []string) sql.NullString {
 
 // PartnerWastePriceDetail merepresentasikan satu baris dari partner_waste_price_details
 type PartnerWastePriceDetail struct {
-	ID                   int            `json:"id"`
-	PartnerWastePriceID  int            `json:"partner_waste_price_id"` // FK ke header
-	WasteDetailID        sql.NullInt32  `json:"waste_detail_id,omitempty"`
-	Image                sql.NullString `json:"image,omitempty"`        // URL Gambar Cloudinary
-	Name                 string         `json:"name"`                   // Nama jenis sampah (misal: Botol PET)
-	Price                string         `json:"price"`                  // Harga (Rp), kirim sebagai string
-	Unit                 string         `json:"unit"`                   // Satuan (kg, pcs)
-	Xpoin                int            `json:"xpoin"`                  // Poin yg didapat user
-	CreatedAt            time.Time      `json:"created_at"`
-	UpdatedAt            time.Time      `json:"updated_at"`
+	ID                  int            `json:"id"`
+	PartnerWastePriceID int            `json:"partner_waste_price_id"` // FK ke header
+	WasteDetailID       sql.NullInt32  `json:"waste_detail_id,omitempty"`
+	Image               sql.NullString `json:"image,omitempty"` // URL Gambar Cloudinary
+	Name                string         `json:"name"`            // Nama jenis sampah (misal: Botol PET)
+	Price               string         `json:"price"`           // Harga (Rp), kirim sebagai string
+	Unit                string         `json:"unit"`            // Satuan (kg, pcs)
+	Xpoin               int            `json:"xpoin"`           // Poin yg didapat user
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }
 
 // WastePriceRequest digunakan untuk Create (POST) dan Update (PUT)
 // Karena melibatkan file upload, kita akan baca field ini dari form-data, bukan JSON
 type WastePriceRequest struct {
-	Name  string  `form:"name" binding:"required"`
-	Price float64 `form:"price" binding:"required,gt=0"`
-	Unit  string  `form:"unit" binding:"required"`
+	Name          string  `form:"name" binding:"required"`
+	Price         float64 `form:"price" binding:"required,gt=0"`
+	Unit          string  `form:"unit" binding:"required"`
 	WasteDetailID int     `form:"waste_detail_id" binding:"required"`
 	// Image *multipart.FileHeader `form:"image"` // Ditangani terpisah di handler
 }
 
 // UpdateWastePriceRequest data UNTUK UPDATE harga sampah (fields opsional)
 type UpdateWastePriceRequest struct {
-	Name  string  `form:"name"`                      // Opsional
-	Price float64 `form:"price" binding:"omitempty,gt=0"` // Opsional, tapi jika ada > 0
-	Unit  string  `form:"unit"`                      // Opsional
+	Name          string  `form:"name"`                           // Opsional
+	Price         float64 `form:"price" binding:"omitempty,gt=0"` // Opsional, tapi jika ada > 0
+	Unit          string  `form:"unit"`                           // Opsional
 	WasteDetailID *int    `form:"waste_detail_id"`
 	// Image *multipart.FileHeader `form:"image"` // Ditangani terpisah
 }
 
 // PartnerTransactionHistoryItem adalah format standar untuk riwayat transaksi finansial gabungan partner
 type PartnerTransactionHistoryItem struct {
-	ID          string         `json:"id"`           // ID unik (misal: "withdraw-5", "topup-2")
-	Type        string         `json:"type"`         // 'withdraw', 'topup', 'convert', 'transfer'
+	ID          string         `json:"id"`               // ID unik (misal: "withdraw-5", "topup-2")
+	Type        string         `json:"type"`             // 'withdraw', 'topup', 'convert', 'transfer'
 	Amount      sql.NullString `json:"amount,omitempty"` // Jumlah (Rp)
 	Points      sql.NullInt32  `json:"points,omitempty"` // Jumlah Xpoin (untuk convert)
 	Status      string         `json:"status"`
@@ -165,33 +165,6 @@ type PartnerConversionHistory struct {
 	ConversionTime time.Time `json:"conversion_time"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-// DepositHistoryDetailItem merepresentasikan satu item sampah dalam satu transaksi deposit
-type DepositHistoryDetailItem struct {
-	ID           int            `json:"id"`
-	WasteTypeID  sql.NullInt32  `json:"waste_type_id,omitempty"`
-	WasteName    sql.NullString `json:"waste_name,omitempty"` // Nama dari waste_types
-	WasteWeight  sql.NullString `json:"waste_weight,omitempty"` // Berat (kg), sbg string
-	Xpoin        int            `json:"xpoin"`
-	Photo        sql.NullString `json:"photo,omitempty"` // URL Foto bukti
-	Notes        sql.NullString `json:"notes,omitempty"`
-	Status       string         `json:"status"`
-}
-
-// DepositHistoryHeader merepresentasikan satu transaksi deposit (header)
-type DepositHistoryHeader struct {
-	ID             int                        `json:"id"`
-	PartnerID      int                        `json:"partner_id"`
-	UserID         int                        `json:"user_id"`
-	UserName       sql.NullString             `json:"user_name,omitempty"` // Nama user penyetor
-	UserEmail      sql.NullString             `json:"user_email,omitempty"`// Email user penyetor
-	TotalWeight    sql.NullString             `json:"total_weight,omitempty"` // Berat total (kg), sbg string
-	TotalXpoin     int                        `json:"total_xpoin"`
-	TransactionTime time.Time                  `json:"transaction_time"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	UpdatedAt      time.Time                  `json:"updated_at"`
-	Details        []DepositHistoryDetailItem `json:"details"` // Slice untuk menampung detail item
 }
 
 // PartnerWallet merepresentasikan data dari tabel partner_wallets
@@ -218,10 +191,10 @@ type PartnerStatistic struct {
 
 // PartnerWithdrawRequest data untuk request penarikan saldo partner
 type PartnerWithdrawRequest struct {
-	PaymentMethodID int     `json:"payment_method_id" binding:"required"`
-	AccountNumber   string  `json:"account_number" binding:"required"`
-	Amount          float64 `json:"amount" binding:"required,gt=0"`
-	AccountHolderName string `json:"account_holder_name"` // Opsional, tergantung bank
+	PaymentMethodID   int     `json:"payment_method_id" binding:"required"`
+	AccountNumber     string  `json:"account_number" binding:"required"`
+	Amount            float64 `json:"amount" binding:"required,gt=0"`
+	AccountHolderName string  `json:"account_holder_name"` // Opsional, tergantung bank
 }
 
 // PartnerTopupRequest data untuk request top up saldo partner
@@ -264,4 +237,75 @@ type CheckUserResponse struct {
 	UserID   int    `json:"user_id"`
 	Fullname string `json:"fullname"`
 	Email    string `json:"email"`
+}
+
+// --- Structs untuk GET History Deposit ---
+
+// DepositHistoryDetailItem merepresentasikan satu item sampah dalam satu transaksi deposit
+type DepositHistoryDetailItem struct {
+	ID                      int            `json:"id"`
+	PartnerDepositHistoryID int            `json:"partner_deposit_history_id"`
+	WasteDetailID           sql.NullInt32  `json:"waste_detail_id,omitempty"`
+	WasteName               sql.NullString `json:"waste_name,omitempty"`   // Nama dari waste_types
+	WasteWeight             sql.NullString `json:"waste_weight,omitempty"` // Berat (kg), sbg string
+	Xpoin                   int            `json:"xpoin"`
+	Photo                   sql.NullString `json:"photo,omitempty"` // URL Foto bukti
+	Notes                   sql.NullString `json:"notes,omitempty"`
+	Status                  string         `json:"status"`
+}
+
+// DepositHistoryHeader merepresentasikan satu transaksi deposit (header)
+type DepositHistoryHeader struct {
+	ID              int                        `json:"id"`
+	PartnerID       int                        `json:"partner_id"`
+	UserID          int                        `json:"user_id"`
+	UserName        sql.NullString             `json:"user_name,omitempty"`    // Nama user penyetor
+	UserEmail       sql.NullString             `json:"user_email,omitempty"`   // Email user penyetor
+	TotalWeight     sql.NullString             `json:"total_weight,omitempty"` // Berat total (kg), sbg string
+	TotalXpoin      int                        `json:"total_xpoin"`
+	TransactionTime time.Time                  `json:"transaction_time"`
+	CreatedAt       time.Time                  `json:"created_at"`
+	UpdatedAt       time.Time                  `json:"updated_at"`
+	Details         []DepositHistoryDetailItem `json:"details"` // Slice untuk menampung detail item
+}
+
+// --- Structs untuk Create Deposit ---
+
+// DepositWasteItem representasi satu item sampah dalam JSON string di request
+type DepositWasteItem struct {
+	PartnerWastePriceDetailID int     `json:"partner_waste_price_detail_id"` // ID dari partner_waste_price_details
+	Weight                    float64 `json:"weight"`                        // Berat dalam KG
+	// Field internal untuk kalkulasi service, BUKAN dari JSON request
+	CalculatedXpoin int           `json:"-"` // Akan diisi oleh service
+	WasteDetailID   sql.NullInt32 `json:"-"` // Akan diisi oleh service
+}
+
+// CreateDepositRequest data yang diterima dari partner via multipart/form-data
+type CreateDepositRequest struct {
+	UserID          int    `form:"user_id" binding:"required"`           // ID User Penyetor
+	DepositMethodID int    `form:"deposit_method_id" binding:"required"` // ID Metode Deposit (DropOff/PickUp)
+	ItemsJSON       string `form:"items_json" binding:"required"`        // JSON string dari []DepositWasteItem
+	Notes           string `form:"notes"`                                // Catatan opsional
+	// Photo *multipart.FileHeader `form:"photo"` // Akan diambil manual di handler
+}
+
+// WastePriceInfo struct helper untuk mengambil data harga/poin
+type WastePriceInfo struct {
+	PricePerUnit  float64
+	XpoinPerUnit  int
+	Unit          string
+	WasteDetailID sql.NullInt32 // Foreign Key ke waste_details
+}
+
+// ArgsDepositCreation struct untuk parameter fungsi transaksi deposit
+type ArgsDepositCreation struct {
+	PartnerID        int
+	UserID           int
+	DepositMethodID  int
+	Items            []DepositWasteItem // Slice dari item yang disetor (sudah dihitung Xpoin & WasteDetailID)
+	TotalWeight      float64
+	TotalXpoin       int
+	Notes            sql.NullString
+	PhotoURL         sql.NullString
+	TransactionTime  time.Time // Waktu transaksi aktual
 }

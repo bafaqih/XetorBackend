@@ -855,3 +855,77 @@ func (h *PartnerHandler) CheckUserByEmail(c *gin.Context) {
 
 	c.JSON(http.StatusOK, userData) // Kirim data user jika ditemukan
 }
+
+// --- Partner Deposit Creation Handler ---
+
+// CreateDeposit menangani request pembuatan deposit baru
+func (h *PartnerHandler) CreateDeposit(c *gin.Context) {
+	// 1. Ambil ID Partner dari context (sudah divalidasi middleware)
+	partnerIDInterface, exists := c.Get("entityID")
+	if !exists {
+		log.Println("CreateDeposit Error: entityID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: ID partner tidak ada di context"})
+		return
+	}
+	partnerIDStrConv, ok := partnerIDInterface.(string)
+	if !ok {
+		log.Printf("CreateDeposit Error: Invalid type for entityID: %T", partnerIDInterface)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Kesalahan internal: Format ID partner tidak valid"})
+		return
+	}
+
+	// 2. Bind form-data (string fields: items_json, notes)
+	var req CreateDepositRequest
+	req.ItemsJSON = c.PostForm("items_json")
+	req.Notes = c.PostForm("notes")
+
+	// 3. Baca & validasi field integer manual
+	userIDStr := c.PostForm("user_id")
+	userID, errUser := strconv.Atoi(userIDStr)
+	if errUser != nil || userID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id tidak valid atau kosong"})
+		return
+	}
+	req.UserID = userID
+
+	depositMethodIDStr := c.PostForm("deposit_method_id")
+	depositMethodID, errMethod := strconv.Atoi(depositMethodIDStr)
+	if errMethod != nil || depositMethodID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "deposit_method_id tidak valid atau kosong"})
+		return
+	}
+	req.DepositMethodID = depositMethodID
+
+	// Validasi ItemsJSON tidak boleh kosong
+	if req.ItemsJSON == "" {
+		 c.JSON(http.StatusBadRequest, gin.H{"error": "items_json tidak boleh kosong"})
+		 return
+	}
+
+	// 4. Ambil file foto (opsional)
+	imageFile, _ := c.FormFile("photo") // Abaikan error jika file tidak ada
+
+	// 5. Panggil service
+	createdDepositHeader, err := h.service.CreateDeposit(partnerIDStrConv, req, imageFile)
+	if err != nil {
+		errMsg := err.Error()
+		log.Printf("Error CreateDeposit handler: %v", err) // Log detail error
+		// Bedakan error validasi (400) vs internal (500)
+		if strings.Contains(errMsg, "tidak valid") || strings.Contains(errMsg, "harus positif") ||
+		   strings.Contains(errMsg, "tidak mencukupi") || strings.Contains(errMsg, "tidak ditemukan") ||
+		   strings.Contains(errMsg, "minimal harus ada") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses setoran sampah"})
+		}
+		return
+	}
+
+	// 6. Kirim response sukses
+	c.JSON(http.StatusCreated, gin.H{
+		"message":           "Setoran sampah berhasil dicatat",
+		"deposit_header_id": createdDepositHeader.ID, // Kirim ID header deposit baru
+		// Atau bisa kirim seluruh objek header jika service mengembalikannya
+		// "deposit_header":    createdDepositHeader,
+	})
+}

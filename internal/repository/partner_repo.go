@@ -784,12 +784,14 @@ func (r *PartnerRepository) GetDepositHistoryByPartnerID(partnerID int) ([]partn
 	// Gunakan JOIN untuk mendapatkan nama waste type
 	queryDetails := `
 		SELECT
-			pdd.id, pdd.partner_deposit_history_id, pdd.waste_type_id, wt.name as waste_name,
-			pdd.waste_weight, pdd.xpoin, pdd.photo, pdd.notes, pdd.status
-		FROM partner_deposit_history_details pdd
-		LEFT JOIN waste_types wt ON pdd.waste_type_id = wt.id
-		JOIN partner_deposit_histories pdh ON pdd.partner_deposit_history_id = pdh.id -- Join ke header untuk filter partner
-		WHERE pdh.partner_id = $1`
+			pdd.id, pdd.partner_deposit_history_id, pdd.waste_detail_id, -- Ganti dari waste_type_id
+            wd.name as waste_name, -- Ambil nama dari waste_details
+            pdd.waste_weight, pdd.xpoin, pdd.photo, pdd.notes, pdd.status
+        FROM partner_deposit_history_details pdd
+        -- JOIN ke waste_details berdasarkan waste_detail_id
+        LEFT JOIN waste_details wd ON pdd.waste_detail_id = wd.id
+        JOIN partner_deposit_histories pdh ON pdd.partner_deposit_history_id = pdh.id
+        WHERE pdh.partner_id = $1`
 
 	rowsDetails, err := r.db.Query(queryDetails, partnerID)
 	if err != nil {
@@ -805,8 +807,8 @@ func (r *PartnerRepository) GetDepositHistoryByPartnerID(partnerID int) ([]partn
 		var wasteWeight sql.NullFloat64 // Baca DECIMAL sbg NullFloat64
 
 		err := rowsDetails.Scan(
-			&detail.ID, &headerID, &detail.WasteTypeID, &detail.WasteName,
-			&wasteWeight, &detail.Xpoin, &detail.Photo, &detail.Notes, &detail.Status,
+			&detail.ID, &headerID, &detail.WasteDetailID, &detail.WasteName,
+            &wasteWeight, &detail.Xpoin, &detail.Photo, &detail.Notes, &detail.Status,
 		)
 		if err != nil {
 			log.Printf("Error scanning deposit history detail row for partner ID %d: %v", partnerID, err)
@@ -1217,4 +1219,109 @@ func (r *PartnerRepository) ExecutePartnerConversionTransaction(
 
 	log.Printf("Partner conversion successful for partner ID %d: %s", partnerID, conversionType)
 	return &updatedWallet, err // err akan nil jika commit berhasil
+}
+
+// --- Partner Waste Price Functions ---
+
+// Pastikan fungsi ini mengembalikan waste_detail_id dan menggunakan struct dari model
+func (r *PartnerRepository) GetWastePriceInfoForCalculation(detailID int, partnerID int) (*partner.WastePriceInfo, error) { // Return type dari model
+	headerID, err := r.FindOrCreateWastePriceHeader(partnerID)
+	if err != nil { return nil, err }
+
+	query := `SELECT price, xpoin, unit, waste_detail_id FROM partner_waste_price_details WHERE id = $1 AND partner_waste_price_id = $2`
+
+	var info partner.WastePriceInfo // Gunakan struct dari model
+	var priceDB float64
+	// Scan waste_detail_id
+	err = r.db.QueryRow(query, detailID, headerID).Scan(&priceDB, &info.XpoinPerUnit, &info.Unit, &info.WasteDetailID)
+	if err != nil {
+		if err == sql.ErrNoRows { return nil, errors.New("detail harga sampah tidak ditemukan") }
+		log.Printf("Error getting waste price info for detail ID %d: %v", detailID, err)
+		return nil, errors.New("gagal mengambil info harga sampah")
+	}
+	info.PricePerUnit = priceDB
+	return &info, nil
+}
+
+// --- Partner Deposit Creation ---
+
+// ExecuteDepositCreationTransaction menjalankan semua operasi DB sisi partner untuk deposit baru
+func (r *PartnerRepository) ExecuteDepositCreationTransaction(args partner.ArgsDepositCreation) (int, error) { // Parameter dari model
+	tx, err := r.db.Begin()
+	if err != nil { log.Printf("Error starting tx: %v", err); return 0, errors.New("gagal memulai transaksi") }
+	defer func() {
+		if p := recover(); p != nil { tx.Rollback(); panic(p) } else
+		if err != nil { tx.Rollback(); log.Printf("Rolling back tx due to error: %v", err) } else
+		{ err = tx.Commit(); if err != nil { log.Printf("Error committing tx: %v", err) } }
+	}()
+
+	// 1. Cek & Kurangi Xpoin Partner
+	queryUpdatePartnerWallet := `UPDATE partner_wallets SET xpoin = xpoin - $1, updated_at = NOW() WHERE partner_id = $2 AND xpoin >= $1`
+	result, err := tx.Exec(queryUpdatePartnerWallet, args.TotalXpoin, args.PartnerID)
+	if err != nil { return 0, errors.New("gagal mengupdate xpoin partner") }
+	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 {
+		// Cek apakah wallet ada sebelum menyimpulkan poin tidak cukup
+		_, errW := r.FindOrCreateWalletByPartnerID(args.PartnerID); if errW != nil { return 0, errors.New("gagal memeriksa wallet partner")}
+		return 0, errors.New("xpoin partner tidak mencukupi")
+	}
+
+	// 2. Insert Header Deposit Partner
+	queryInsertHeader := `INSERT INTO partner_deposit_histories (partner_id, user_id, total_weight, total_xpoin, transaction_time) VALUES ($1, $2, $3, $4, $5) RETURNING id`
+	var depositHeaderID int
+	err = tx.QueryRow(queryInsertHeader, args.PartnerID, args.UserID, args.TotalWeight, args.TotalXpoin, args.TransactionTime).Scan(&depositHeaderID)
+	if err != nil { return 0, errors.New("gagal menyimpan header deposit") }
+
+	// 3. Insert Detail Deposit Partner
+	queryInsertDetail := `INSERT INTO partner_deposit_history_details (partner_deposit_history_id, waste_detail_id, waste_weight, deposit_method_id, photo, xpoin, notes, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Verified')`
+	stmtDetail, err := tx.Prepare(queryInsertDetail); if err != nil { return 0, errors.New("gagal menyiapkan detail deposit") }
+	defer stmtDetail.Close()
+	for _, item := range args.Items { // args.Items sekarang tipe []partner.DepositWasteItem
+		_, err = stmtDetail.Exec(
+			depositHeaderID,
+			item.WasteDetailID, // ID dari waste_details (sudah diisi service)
+			item.Weight,
+			args.DepositMethodID,
+			args.PhotoURL,
+			item.CalculatedXpoin, // Xpoin per item (sudah diisi service)
+			args.Notes,
+		)
+		if err != nil { return 0, errors.New("gagal menyimpan item detail deposit") }
+	}
+
+	// 4. Update Partner Statistics (Waste & Transaction)
+	queryUpdatePartnerStats := `UPDATE partner_statistics SET waste = waste + $1, transaction = transaction + 1, updated_at = NOW() WHERE partner_id = $2`
+	resultStats, err := tx.Exec(queryUpdatePartnerStats, args.TotalWeight, args.PartnerID)
+	if err != nil { return 0, errors.New("gagal update statistik partner") }
+    rowsAffectedStats, _ := resultStats.RowsAffected()
+    if rowsAffectedStats == 0 { // Jika statistik belum ada, buat baru
+        queryInsertStats := `INSERT INTO partner_statistics (partner_id, waste, transaction) VALUES ($1, $2, 1)`
+        _, errInsert := tx.Exec(queryInsertStats, args.PartnerID, args.TotalWeight)
+        if errInsert != nil { return 0, errors.New("gagal membuat statistik partner")}
+    }
+
+
+	// 5. Insert/Update Partner Customer
+	queryUpsertCustomer := `INSERT INTO partner_customers (partner_id, user_id, total_transactions) VALUES ($1, $2, 1) ON CONFLICT (partner_id, user_id) DO UPDATE SET total_transactions = partner_customers.total_transactions + 1, updated_at = NOW()`
+	_, err = tx.Exec(queryUpsertCustomer, args.PartnerID, args.UserID)
+	if err != nil { return 0, errors.New("gagal update data pelanggan partner")}
+
+	log.Printf("Partner deposit tx successful. HeaderID: %d", depositHeaderID)
+	return depositHeaderID, err // Akan nil jika commit ok
+}
+
+// UpdateUserDepositHistoryIDReference menyimpan referensi ID riwayat user di riwayat partner
+func (r *PartnerRepository) UpdateUserDepositHistoryIDReference(partnerDepositHistoryID int, userDepositHistoryID int) error {
+	query := `UPDATE partner_deposit_histories SET user_deposit_history_id = $1, updated_at = NOW() WHERE id = $2`
+	result, err := r.db.Exec(query, userDepositHistoryID, partnerDepositHistoryID)
+	if err != nil {
+		log.Printf("Error updating user_deposit_history_id for partner_deposit_history_id %d: %v", partnerDepositHistoryID, err)
+		return errors.New("gagal update referensi riwayat deposit")
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		// Ini aneh jika terjadi, karena header partner baru saja dibuat
+		log.Printf("Warning: partner_deposit_histories record not found during user_deposit_history_id update (ID: %d)", partnerDepositHistoryID)
+		// return errors.New("riwayat deposit partner tidak ditemukan saat update referensi") // Mungkin tidak perlu gagalkan proses?
+	}
+	return nil
 }

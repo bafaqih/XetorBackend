@@ -123,7 +123,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			depositRoutes.GET("/history", partnerHandler.GetDepositHistory)
 			depositRoutes.POST("/verify-qr-token", partnerHandler.VerifyDepositQrToken)
 			depositRoutes.POST("/check-user", partnerHandler.CheckUserByEmail)
-			// depositRoutes.POST("/create", partnerHandler.CreateDeposit)
+			depositRoutes.POST("/create", partnerHandler.CreateDeposit)
 		}
 
     }

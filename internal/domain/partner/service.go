@@ -13,6 +13,7 @@ import (
 	"math"
 	"time"
 	"sort"
+	"encoding/json"
 
 
 	"github.com/cloudinary/cloudinary-go/v2"
@@ -82,6 +83,11 @@ type PartnerRepository interface {
 
 	// Conversion execution
 	ExecutePartnerConversionTransaction(partnerID int, xpoinChange int, balanceChange float64, conversionType string, amountXpInvolved int, amountRpInvolved float64, rate float64) (*PartnerWallet, error)
+
+	// Deposit execution
+	GetWastePriceInfoForCalculation(detailID int, partnerID int) (*WastePriceInfo, error) // Pastikan return type *WastePriceInfo (dari model)
+	ExecuteDepositCreationTransaction(args ArgsDepositCreation) (int, error)
+	UpdateUserDepositHistoryIDReference(partnerDepositHistoryID int, userDepositHistoryID int) error
 }
 
 type UserRepositoryForPartner interface {
@@ -89,6 +95,11 @@ type UserRepositoryForPartner interface {
      FindOrCreateWalletByUserID(userID int) (*user.UserWallet, error)
 	 FindUserIDByEmail(email string) (int, error)
      FindByID(id int) (*user.User, error)
+	 AddDepositHistory(userID, partnerID, totalPoints int, depositTime time.Time) (int, error)
+	 UpdateUserWalletOnDeposit(userID, pointsToAdd int) error
+	 GetWasteDetailFactors(wasteDetailIDs []int) (map[int]user.ImpactFactors, error) // Return type dari model user
+	 UpdateUserStatisticsOnDeposit(userID int, totalWaste float64, energySaved, co2Saved, waterSaved float64, treesSaved int) error
+	 FindOrCreateStatisticsByUserID(userID int) (*user.UserStatistic, error) // Pastikan ini ada
 }
 
 type PartnerService struct {
@@ -905,4 +916,154 @@ func (s *PartnerService) CheckUserByEmail(req CheckUserRequest) (*CheckUserRespo
         Email:    userData.Email,
     }
     return response, nil
+}
+
+// --- Partner Deposit Creation Service ---
+
+// uploadDepositImage - Fungsi BARU khusus untuk foto bukti deposit
+func (s *PartnerService) uploadDepositImage(partnerID int, userID int, fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader == nil { return "", nil } // Tidak ada file
+	file, err := fileHeader.Open(); if err != nil { return "", errors.New("gagal membaca file bukti deposit") }
+	defer file.Close()
+
+	cldURL := config.GetCloudinaryURL()
+	cld, err := cloudinary.NewFromURL(cldURL); if err != nil { return "", errors.New("gagal init cloudinary") }
+
+	// Nama file unik untuk bukti deposit
+	publicID := fmt.Sprintf("deposit_%d_%d_%d", partnerID, userID, time.Now().UnixNano())
+
+	overwrite := true // Atau false jika tidak ingin menimpa?
+	uploadParams := uploader.UploadParams{
+		Folder:         "xetor/deposits", // Folder khusus deposit
+		PublicID:       publicID,
+		Overwrite:      &overwrite,
+		Format:         "jpg",
+	}
+
+	ctx := context.Background()
+	uploadResult, err := cld.Upload.Upload(ctx, file, uploadParams)
+	if err != nil { return "", errors.New("gagal upload bukti deposit ke cloudinary") }
+	return uploadResult.SecureURL, nil
+}
+
+// CreateDeposit memproses pembuatan setoran sampah baru
+func (s *PartnerService) CreateDeposit(partnerIDStr string, req CreateDepositRequest, imageFile *multipart.FileHeader) (*DepositHistoryHeader, error) {
+	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+
+	// 1. Unmarshal & Validasi Items JSON
+	var itemsInput []DepositWasteItem
+	if err := json.Unmarshal([]byte(req.ItemsJSON), &itemsInput); err != nil { return nil, errors.New("format data item sampah tidak valid") }
+	if len(itemsInput) == 0 { return nil, errors.New("minimal harus ada satu item sampah") }
+
+	// 2. Validasi User & Deposit Method ID
+	userData, err := s.userRepo.FindByID(req.UserID)
+	if err != nil || userData == nil { return nil, errors.New("ID pengguna tidak valid atau tidak ditemukan") }
+	// TODO: Validasi req.DepositMethodID (ambil dari DB master data)
+
+	// 3. Kalkulasi Total, Kumpulkan ID Detail, Cek Xpoin Partner
+	totalWeight, totalXpoin := 0.0, 0
+	wasteDetailIDs := []int{}             // Kumpulkan ID waste_details untuk ambil faktor
+	calculatedItems := []DepositWasteItem{} // Simpan item dgn data lengkap
+
+	partnerWallet, errWallet := s.repo.FindOrCreateWalletByPartnerID(partnerID);
+	if errWallet != nil { return nil, errors.New("gagal memeriksa wallet partner")}
+
+	for _, item := range itemsInput {
+		if item.Weight <= 0 { return nil, fmt.Errorf("berat item tidak valid") }
+
+		priceInfo, err := s.repo.GetWastePriceInfoForCalculation(item.PartnerWastePriceDetailID, partnerID)
+		if err != nil { return nil, fmt.Errorf("gagal mengambil info harga untuk item ID %d: %w", item.PartnerWastePriceDetailID, err)}
+
+		itemXpoin := int(math.Floor(item.Weight * float64(priceInfo.XpoinPerUnit))) // Asumsi XpoinPerUnit per KG
+		if itemXpoin < 0 { itemXpoin = 0 }
+
+		totalWeight += item.Weight
+		totalXpoin += itemXpoin
+
+		if priceInfo.WasteDetailID.Valid {
+			wasteDetailIDs = append(wasteDetailIDs, int(priceInfo.WasteDetailID.Int32))
+			item.WasteDetailID = priceInfo.WasteDetailID // Simpan wasteDetailID di item
+		}
+		item.CalculatedXpoin = itemXpoin // Simpan Xpoin hasil hitung
+		calculatedItems = append(calculatedItems, item)
+	}
+
+	// Validasi Xpoin Partner SEBELUM transaksi DB utama
+	if partnerWallet.Xpoin < totalXpoin {
+		return nil, errors.New("xpoin partner tidak mencukupi untuk transaksi ini")
+	}
+
+
+	// 4. Ambil Faktor Konversi Statistik User
+	factorsMap, err := s.userRepo.GetWasteDetailFactors(wasteDetailIDs)
+	if err != nil { log.Printf("Warning: Failed to get waste detail factors: %v", err); factorsMap = make(map[int]user.ImpactFactors) }
+
+
+	// 5. Hitung Dampak Lingkungan
+	totalEnergySaved, totalCo2Saved, totalWaterSaved, totalTreesSaved := 0.0, 0.0, 0.0, 0.0
+	for _, item := range calculatedItems {
+		 if item.WasteDetailID.Valid {
+			 detailID := int(item.WasteDetailID.Int32)
+			 if factors, ok := factorsMap[detailID]; ok {
+				 totalEnergySaved += item.Weight * factors.Energy
+				 totalCo2Saved += item.Weight * factors.CO2
+				 totalWaterSaved += item.Weight * factors.Water
+				 totalTreesSaved += item.Weight * factors.Tree
+			 }
+		 }
+	}
+	treesSavedInt := int(math.Round(totalTreesSaved))
+
+	// 6. Upload Foto Deposit (jika ada) - gunakan fungsi baru
+	imageURL, err := s.uploadDepositImage(partnerID, req.UserID, imageFile)
+	if err != nil { return nil, err }
+	photoURLDB := sql.NullString{String: imageURL, Valid: imageURL != ""}
+
+	// 7. Siapkan Argumen untuk Transaksi Utama Partner
+	transactionTime := time.Now()
+	depositArgs := ArgsDepositCreation{ // Gunakan struct dari model partner
+		PartnerID:        partnerID,
+		UserID:           req.UserID,
+		DepositMethodID:  req.DepositMethodID,
+		Items:            calculatedItems, // Kirim item dgn xpoin & wasteDetailID
+		TotalWeight:      totalWeight,
+		TotalXpoin:       totalXpoin,
+		Notes:            sql.NullString{String: req.Notes, Valid: req.Notes != ""},
+		PhotoURL:         photoURLDB,
+		TransactionTime:  transactionTime,
+	}
+
+	// 8. Eksekusi Transaksi Database Utama (Partner side)
+	depositHeaderID, err := s.repo.ExecuteDepositCreationTransaction(depositArgs)
+	if err != nil { return nil, err } // Error transaksi utama (termasuk xpoin partner tdk cukup)
+
+
+	// 9. Update Data User (Idealnya dalam transaksi yg sama)
+	// Pastikan wallet & stats user ada
+	 _, errWU := s.userRepo.FindOrCreateWalletByUserID(req.UserID); if errWU != nil { log.Printf("Failed FindOrCreate User Wallet: %v", errWU); /* Lanjutkan? */ }
+	 _, errSU := s.userRepo.FindOrCreateStatisticsByUserID(req.UserID); if errSU != nil { log.Printf("Failed FindOrCreate User Stats: %v", errSU); /* Lanjutkan? */ }
+
+	// Panggil AddDepositHistory dan TANGKAP ID nya
+    userDepositHistoryID, err := s.userRepo.AddDepositHistory(req.UserID, partnerID, depositArgs.TotalXpoin, transactionTime)
+	if err != nil {
+        log.Printf("CRITICAL: Failed AddUserDepositHistory after partner tx commit: %v. Data potentially inconsistent.", err)
+        // Harusnya ada mekanisme rollback manual atau notifikasi error
+        return nil, err // Atau return error parsial?
+    }
+
+	err = s.userRepo.UpdateUserWalletOnDeposit(req.UserID, totalXpoin)
+	if err != nil { log.Printf("Failed UpdateUserWalletOnDeposit: %v", err); /* Rollback manual? */ }
+
+	err = s.userRepo.UpdateUserStatisticsOnDeposit(req.UserID, totalWeight, totalEnergySaved, totalCo2Saved, totalWaterSaved, treesSavedInt)
+	if err != nil { log.Printf("Failed UpdateUserStatisticsOnDeposit: %v", err); /* Rollback manual? */ }
+
+	err = s.repo.UpdateUserDepositHistoryIDReference(depositHeaderID, userDepositHistoryID)
+    if err != nil {
+        log.Printf("Warning: Failed to update user_deposit_history_id reference for partner deposit %d: %v", depositHeaderID, err)
+    }
+
+
+	// 10. Kembalikan data header deposit yang baru dibuat
+	// (Untuk sementara kembalikan ID saja, atau bisa buat fungsi GetDepositHeaderByID di repo)
+	return &DepositHistoryHeader{ID: depositHeaderID, PartnerID: partnerID, UserID: req.UserID, TotalXpoin: totalXpoin, TransactionTime: transactionTime}, nil
 }
