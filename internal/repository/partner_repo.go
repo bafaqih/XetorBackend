@@ -510,27 +510,26 @@ func (r *PartnerRepository) UpdateWastePriceDetail(detailID int, partnerID int, 
 	fields := []string{}
 	args := []interface{}{}
 	argId := 1
-	updateXpoin := false
 
 	// Bangun query update dinamis
 	if detail.Image.Valid { fields = append(fields, fmt.Sprintf("image = $%d", argId)); args = append(args, detail.Image); argId++ }
 	if detail.Name != "" { fields = append(fields, fmt.Sprintf("name = $%d", argId)); args = append(args, detail.Name); argId++ }
-	if detail.Price != "" {
+	if detail.Price != "" { // 'detail' adalah 'updateData' dari service
+		// Jika Price di-set di service, maka Xpoin juga PASTI sudah di-set
 		priceFloat, err := strconv.ParseFloat(detail.Price, 64)
 		if err != nil { return errors.New("format harga tidak valid") }
-		fields = append(fields, fmt.Sprintf("price = $%d", argId)); args = append(args, priceFloat); argId++
-		updateXpoin = true // Xpoin harus diupdate jika harga berubah
+		fields = append(fields, fmt.Sprintf("price = $%d", argId)) // Tambah 'price' ke query
+		args = append(args, priceFloat)
+		argId++
+		fields = append(fields, fmt.Sprintf("xpoin = $%d", argId)) // Tambah 'xpoin' ke query
+		args = append(args, detail.Xpoin) // Ambil xpoin yg sudah dihitung service
+		argId++
 	}
 	if detail.Unit != "" { fields = append(fields, fmt.Sprintf("unit = $%d", argId)); args = append(args, detail.Unit); argId++ }
 	if detail.WasteDetailID.Valid { // Update waste_detail_id jika dikirim
 	    fields = append(fields, fmt.Sprintf("waste_detail_id = $%d", argId));
 	    args = append(args, detail.WasteDetailID);
 	    argId++
-	}
-
-	// Hanya update xpoin jika harga diupdate ATAU jika xpoin di struct detail diisi manual (jarang terjadi)
-	if updateXpoin {
-		fields = append(fields, fmt.Sprintf("xpoin = $%d", argId)); args = append(args, detail.Xpoin); argId++
 	}
 
 	if len(fields) == 0 { return nil /* No fields to update */ }

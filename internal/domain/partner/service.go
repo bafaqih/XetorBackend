@@ -34,6 +34,10 @@ const (
 	minTopupAmount      = 10000.0
 )
 
+type AdminRepositoryForPartner interface {
+	RecalculateAndUpdateWasteDetailXpoin(wasteDetailID int) error
+}
+
 // Definisikan interface repository yang dibutuhkan
 type PartnerRepository interface {
 	SavePartner(p *Partner) error
@@ -107,10 +111,11 @@ type PartnerService struct {
 	repo PartnerRepository
 	userRepo UserRepositoryForPartner
 	tokenStore *temporary_token.TokenStore
+	adminRepo AdminRepositoryForPartner
 }
 
-func NewPartnerService(repo PartnerRepository, userRepo UserRepositoryForPartner, tokenStore *temporary_token.TokenStore) *PartnerService {
-	return &PartnerService{repo: repo, userRepo: userRepo, tokenStore: tokenStore}
+func NewPartnerService(repo PartnerRepository, userRepo UserRepositoryForPartner, tokenStore *temporary_token.TokenStore, adminRepo AdminRepositoryForPartner)*PartnerService {
+	return &PartnerService{repo: repo, userRepo: userRepo, tokenStore: tokenStore, adminRepo: adminRepo}
 }
 
 // RegisterPartner memproses registrasi partner baru
@@ -500,6 +505,15 @@ func (s *PartnerService) CreateWastePrice(partnerIDStr string, req WastePriceReq
 	err = s.repo.CreateWastePriceDetail(detail)
 	if err != nil { return nil, err }
 
+	if detail.WasteDetailID.Valid { // Hanya jika WasteDetailID valid
+		go func(wdID int) { 
+			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
+			if errRecalc != nil {
+				log.Printf("Error triggering xpoin recalculation after create for waste_detail_id %d: %v", wdID, errRecalc)
+			}
+		}(int(detail.WasteDetailID.Int32))
+	}
+
 	// Ambil data lagi untuk response agar WasteDetailID terisi jika NULL
     return s.repo.GetWastePriceDetailByID(detail.ID, partnerID)
 }
@@ -538,23 +552,33 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 		return nil, errors.New("detail harga sampah tidak ditemukan atau bukan milik Anda")
 	}
 
+	// Simpan WasteDetailID lama SEBELUM update
+	oldWasteDetailID := existingDetail.WasteDetailID
+	
 	// Siapkan data update
-	updateData := &PartnerWastePriceDetail{
-		ID:    detailID, // Untuk repo
-		Image: sql.NullString{Valid: false}, // Default: jangan update image
-	}
+	updateData := &PartnerWastePriceDetail{ ID: detailID, Image: sql.NullString{Valid: false} }
 	needsUpdate := false
+	xpoinNeedsRecalc := false // Flag apakah xpoin berubah
+    var newWasteDetailID sql.NullInt32 // Tampung ID baru jika ada
 
 	if req.Name != "" { updateData.Name = req.Name; needsUpdate = true }
 	if req.Unit != "" { updateData.Unit = req.Unit; needsUpdate = true }
-	if req.WasteDetailID != nil { // Jika WasteDetailID dikirim
-		// TODO: Validasi apakah *req.WasteDetailID valid?
-		updateData.WasteDetailID = sql.NullInt32{Int32: int32(*req.WasteDetailID), Valid: true}
+	if req.WasteDetailID != nil {
+		// TODO: Validasi *req.WasteDetailID?
+		newWasteDetailID = sql.NullInt32{Int32: int32(*req.WasteDetailID), Valid: true}
+		updateData.WasteDetailID = newWasteDetailID // Set ID baru untuk update repo
 		needsUpdate = true
-	}
+	} else {
+        newWasteDetailID = oldWasteDetailID // Jika tidak diupdate, pakai yg lama
+    }
 	if req.Price > 0 {
-		updateData.Price = fmt.Sprintf("%.2f", req.Price) // Update harga
-		updateData.Xpoin = calculateXpoin(req.Price)      // Hitung ulang Xpoin HANYA jika harga diupdate
+		// Harga diupdate
+		updateData.Price = fmt.Sprintf("%.2f", req.Price)
+		newXpoin := calculateXpoin(req.Price)
+		updateData.Xpoin = newXpoin // SELALU set Xpoin baru jika Price diupdate
+		if newXpoin != existingDetail.Xpoin {
+			xpoinNeedsRecalc = true
+		}
 		needsUpdate = true
 	} else {
 	}
@@ -575,6 +599,32 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 	err = s.repo.UpdateWastePriceDetail(detailID, partnerID, updateData)
 	if err != nil { return nil, err }
 
+	// Kalkulasi ulang untuk ID lama DAN ID baru jika berbeda
+	if oldWasteDetailID.Valid && oldWasteDetailID != newWasteDetailID {
+		go func(wdID int) {
+			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
+            if errRecalc != nil {
+                log.Printf("Error recalculating xpoin for old waste_detail_id %d: %v", wdID, errRecalc)
+            }
+		}(int(oldWasteDetailID.Int32))
+	}
+    // Selalu kalkulasi ulang untuk ID baru (atau ID lama jika tidak berubah)
+	if newWasteDetailID.Valid {
+		go func(wdID int) {
+			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
+            if errRecalc != nil {
+                log.Printf("Error recalculating xpoin for new waste_detail_id %d: %v", wdID, errRecalc)
+            }
+		}(int(newWasteDetailID.Int32))
+	} else if xpoinNeedsRecalc && oldWasteDetailID.Valid { // Jika hanya xpoin berubah, kalkulasi ID lama
+         go func(wdID int) {
+			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
+            if errRecalc != nil {
+                log.Printf("Error recalculating xpoin (price changed) for waste_detail_id %d: %v", wdID, errRecalc)
+            }
+		}(int(oldWasteDetailID.Int32))
+    }
+
 	return s.repo.GetWastePriceDetailByID(detailID, partnerID) // Ambil data terbaru
 }
 
@@ -583,16 +633,26 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 func (s *PartnerService) DeleteWastePrice(detailID int, partnerIDStr string) error {
 	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return errors.New("ID partner tidak valid") }
 
-	// TODO: Hapus gambar dari Cloudinary sebelum hapus dari DB? (Opsional)
-	// detail, _ := s.repo.GetWastePriceDetailByID(detailID, partnerID)
-	// if detail != nil && detail.Image.Valid {
-	//    cld.Upload.Destroy(...)
-	// }
+	// Ambil data detail SEBELUM dihapus untuk mendapatkan WasteDetailID
+	detailToDelete, err := s.repo.GetWastePriceDetailByID(detailID, partnerID)
+	if err != nil || detailToDelete == nil {
+		return errors.New("detail harga sampah tidak ditemukan atau bukan milik Anda")
+	}
+	wasteDetailIDToRecalc := detailToDelete.WasteDetailID // Simpan ID nya
+
+	// TODO: Hapus gambar dari Cloudinary?
 
 	err = s.repo.DeleteWastePriceDetail(detailID, partnerID)
-	if err != nil {
-		if err == sql.ErrNoRows { return errors.New("detail harga sampah tidak ditemukan atau bukan milik Anda") }
-		return errors.New("gagal menghapus detail harga sampah")
+	if err != nil { return err } // Repo handle not found
+
+	// --- PANGGIL KALKULASI SETELAH SUKSES DELETE ---
+	if wasteDetailIDToRecalc.Valid { // Hanya jika ada WasteDetailID
+		go func(wdID int) {
+			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
+            if errRecalc != nil {
+                log.Printf("Error recalculating xpoin after delete for waste_detail_id %d: %v", wdID, errRecalc)
+            }
+		}(int(wasteDetailIDToRecalc.Int32))
 	}
 	return nil
 }

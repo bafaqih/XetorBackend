@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"log"
 	"strings" // Untuk update dinamis
+	"math"
+	"errors"
 
 	"fmt"
 	"xetor.id/backend/internal/domain/admin"
@@ -714,4 +716,53 @@ func (r *AdminRepository) DeleteXetorPartner(id int) error {
 	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return sql.ErrNoRows }
 	log.Printf("Xetor partner entry deleted for ID: %d", id)
 	return nil
+}
+
+// --- Waste Detail Xpoin Recalculation ---
+
+// RecalculateAndUpdateWasteDetailXpoin menghitung rata-rata xpoin dari partner
+// dan mengupdate nilai xpoin di tabel waste_details.
+func (r *AdminRepository) RecalculateAndUpdateWasteDetailXpoin(wasteDetailID int) error {
+	// 1. Query untuk menghitung rata-rata xpoin dari partner_waste_price_details
+	queryAvg := `
+		SELECT COALESCE(AVG(xpoin), 0)
+		FROM partner_waste_price_details
+		WHERE waste_detail_id = $1`
+
+	var avgXpoin float64 // AVG mengembalikan float
+	err := r.db.QueryRow(queryAvg, wasteDetailID).Scan(&avgXpoin)
+	if err != nil {
+		// Jika tidak ada partner price untuk detail ini (avg=NULL -> COALESCE jadi 0), itu bukan error
+		if err == sql.ErrNoRows {
+			avgXpoin = 0.0 // Pastikan 0 jika tidak ada data
+		} else {
+			log.Printf("Error calculating average xpoin for waste_detail_id %d: %v", wasteDetailID, err)
+			// Kita bisa pilih untuk melanjutkan dengan 0 atau mengembalikan error
+			// Untuk sementara, kita lanjutkan dengan 0 agar tidak menghentikan proses utama
+			avgXpoin = 0.0
+			// return errors.New("gagal menghitung rata-rata xpoin partner") // Opsi jika ingin lebih strict
+		}
+	}
+
+	// Bulatkan rata-rata ke integer terdekat
+	calculatedXpoin := int(math.Round(avgXpoin))
+
+	// 2. Query untuk mengupdate xpoin di tabel waste_details
+	queryUpdate := `UPDATE waste_details SET xpoin = $1, updated_at = NOW() WHERE id = $2`
+	result, err := r.db.Exec(queryUpdate, calculatedXpoin, wasteDetailID)
+	if err != nil {
+		log.Printf("Error updating xpoin for waste_detail_id %d: %v", wasteDetailID, err)
+		return errors.New("gagal mengupdate xpoin di waste_details")
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected > 0 {
+		log.Printf("Recalculated and updated xpoin for waste_detail_id %d to %d", wasteDetailID, calculatedXpoin)
+	} else {
+		// Ini bisa terjadi jika waste_detail_id yang diberikan tidak valid (tidak ada di tabel waste_details)
+		log.Printf("Warning: No rows updated. waste_detail_id %d might not exist in waste_details table.", wasteDetailID)
+		// return errors.New("waste_detail_id tidak ditemukan di tabel waste_details") // Opsi jika ingin lebih strict
+	}
+
+	return nil // Sukses
 }

@@ -19,6 +19,7 @@ type AdminRepository interface {
 	GetWasteDetailByID(id int) (*WasteDetail, error)
 	UpdateWasteDetail(id int, req *UpdateWasteDetailRequest) error
 	DeleteWasteDetail(id int) error
+	RecalculateAndUpdateWasteDetailXpoin(wasteDetailID int) error
 
 	// PaymentMethod methods
 	CreatePaymentMethod(pm *PaymentMethod) error

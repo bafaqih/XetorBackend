@@ -21,6 +21,11 @@ func main() {
 	// Inisialisasi TokenStore untuk token sementara
 	tokenStore := temporary_token.NewTokenStore()
 
+	// Komponen Admin
+	adminRepo := repository.NewAdminRepository(db)
+	adminService := admin.NewAdminService(adminRepo)
+	adminHandler := admin.NewAdminHandler(adminService)
+
 	// Komponen User
 	userRepo := repository.NewUserRepository(db)
 	userService := user.NewService(userRepo, tokenStore)
@@ -28,13 +33,8 @@ func main() {
 
 	// Komponen Partner
 	partnerRepo := repository.NewPartnerRepository(db)
-	partnerService := partner.NewPartnerService(partnerRepo, userRepo, tokenStore)
+	partnerService := partner.NewPartnerService(partnerRepo, userRepo, tokenStore, adminRepo)
 	partnerHandler := partner.NewPartnerHandler(partnerService)
-
-	// Komponen Admin
-	adminRepo := repository.NewAdminRepository(db)
-	adminService := admin.NewAdminService(adminRepo)
-	adminHandler := admin.NewAdminHandler(adminService)
 
 	// Komponen Midtrans
 	midtransService := midtrans.NewMidtransService(userRepo)
