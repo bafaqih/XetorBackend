@@ -905,18 +905,18 @@ func (r *PartnerRepository) FindOrCreateWalletByPartnerID(partnerID int) (*partn
 
 // --- Partner Statistics ---
 
-// FindOrCreateStatisticsByPartnerID mencari statistik partner, atau membuatnya jika belum ada
-func (r *PartnerRepository) FindOrCreateStatisticsByPartnerID(partnerID int) (*partner.PartnerStatistic, error) {
+// GetBaseStatisticsByPartnerID mencari statistik partner, atau membuatnya jika belum ada
+func (r *PartnerRepository) GetBaseStatisticsByPartnerID(partnerID int) (*partner.PartnerStatistic, error) {
 	querySelect := `
-		SELECT id, partner_id, waste, revenue, customer, transaction, created_at, updated_at
+		SELECT id, partner_id, waste, transaction, created_at, updated_at
 		FROM partner_statistics
 		WHERE partner_id = $1`
 
 	var stats partner.PartnerStatistic
-	var waste, revenue float64 // Baca DECIMAL sebagai float64
+	var waste float64 // Baca DECIMAL sebagai float64
 
 	err := r.db.QueryRow(querySelect, partnerID).Scan(
-		&stats.ID, &stats.PartnerID, &waste, &revenue, &stats.Customer, &stats.Transaction,
+		&stats.ID, &stats.PartnerID, &waste, &stats.Transaction,
 		&stats.CreatedAt, &stats.UpdatedAt,
 	)
 
@@ -925,12 +925,12 @@ func (r *PartnerRepository) FindOrCreateStatisticsByPartnerID(partnerID int) (*p
 			// Statistik belum ada, buat baru
 			log.Printf("Statistics not found for partner ID %d, creating new entry.", partnerID)
 			queryInsert := `
-				INSERT INTO partner_statistics (partner_id, waste, revenue, customer, transaction)
-				VALUES ($1, 0.00, 0.00, 0, 0)
-				RETURNING id, partner_id, waste, revenue, customer, transaction, created_at, updated_at`
+				INSERT INTO partner_statistics (partner_id, waste, transaction)
+				VALUES ($1, 0.00, 0)
+				RETURNING id, partner_id, waste, transaction, created_at, updated_at`
 
 			errInsert := r.db.QueryRow(queryInsert, partnerID).Scan(
-				&stats.ID, &stats.PartnerID, &waste, &revenue, &stats.Customer, &stats.Transaction,
+				&stats.ID, &stats.PartnerID, &waste, &stats.Transaction,
 				&stats.CreatedAt, &stats.UpdatedAt,
 			)
 			if errInsert != nil {
@@ -939,7 +939,8 @@ func (r *PartnerRepository) FindOrCreateStatisticsByPartnerID(partnerID int) (*p
 			}
 			// Format ke string setelah insert
 			stats.Waste = fmt.Sprintf("%.2f", waste)
-			stats.Revenue = fmt.Sprintf("%.2f", revenue)
+			stats.Revenue = "0.00"
+			stats.Customer = 0
 			log.Printf("Partner statistics created successfully for partner ID %d with ID %d", partnerID, stats.ID)
 			return &stats, nil
 		}
@@ -950,8 +951,20 @@ func (r *PartnerRepository) FindOrCreateStatisticsByPartnerID(partnerID int) (*p
 
 	// Statistik ditemukan
 	stats.Waste = fmt.Sprintf("%.2f", waste)
-	stats.Revenue = fmt.Sprintf("%.2f", revenue)
+	stats.Revenue = "0.00"
 	return &stats, nil
+}
+
+// CountUniqueCustomersByPartnerID menghitung jumlah pelanggan unik
+func (r *PartnerRepository) CountUniqueCustomersByPartnerID(partnerID int) (int, error) {
+	query := "SELECT COUNT(*) FROM partner_customers WHERE partner_id = $1"
+	var count int
+	err := r.db.QueryRow(query, partnerID).Scan(&count)
+	if err != nil {
+		log.Printf("Error counting unique customers for partner ID %d: %v", partnerID, err)
+		return 0, err
+	}
+	return count, nil
 }
 
 // --- Partner Withdraw Process Functions ---

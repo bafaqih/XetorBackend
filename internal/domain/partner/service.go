@@ -46,7 +46,8 @@ type PartnerRepository interface {
 	UpdatePassword(id int, newHashedPassword string) error
 	DeletePartnerByID(id int) error
 	FindOrCreateWalletByPartnerID(partnerID int) (*PartnerWallet, error)
-	FindOrCreateStatisticsByPartnerID(partnerID int) (*PartnerStatistic, error)
+	GetBaseStatisticsByPartnerID(partnerID int) (*PartnerStatistic, error) // <-- Tambah/Ganti ini
+	CountUniqueCustomersByPartnerID(partnerID int) (int, error)
 
 	// Alamat partner
 	GetAddressByPartnerID(partnerID int) (*PartnerAddress, error)
@@ -678,11 +679,33 @@ func (s *PartnerService) GetPartnerStatistics(partnerIDStr string) (*PartnerStat
 	partnerID, err := strconv.Atoi(partnerIDStr)
 	if err != nil { return nil, errors.New("ID partner tidak valid") }
 
-	stats, err := s.repo.FindOrCreateStatisticsByPartnerID(partnerID)
+	// 1. Ambil data dasar (waste, transaction)
+	stats, err := s.repo.GetBaseStatisticsByPartnerID(partnerID) // Panggil fungsi repo yang baru
 	if err != nil {
-		return nil, errors.New("gagal mengambil atau membuat statistik partner")
+		return nil, errors.New("gagal mengambil data statistik dasar partner")
 	}
-	return stats, nil
+	// Pastikan stats tidak nil (repo sudah handle create jika belum ada)
+	if stats == nil {
+	    // Ini seharusnya tidak terjadi jika repo bekerja
+	    log.Printf("Error: GetBaseStatisticsByPartnerID returned nil unexpectedly for partner %d", partnerID)
+	    return nil, errors.New("gagal membuat data statistik dasar partner")
+	}
+
+
+	// 2. Ambil jumlah unique customer
+	customerCount, err := s.repo.CountUniqueCustomersByPartnerID(partnerID)
+	if err != nil {
+		// Log error tapi jangan gagalkan proses, set customer ke 0 saja
+		log.Printf("Warning: Failed to count unique customers for partner ID %d: %v", partnerID, err)
+		stats.Customer = 0
+	} else {
+		stats.Customer = customerCount // Isi field Customer
+	}
+
+	// 3. Set Revenue ke 0.00 (sesuai permintaan)
+	stats.Revenue = "0.00"
+
+	return stats, nil // Kembalikan struct gabungan
 }
 
 // --- Partner Withdraw Service Method ---
