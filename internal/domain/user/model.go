@@ -7,20 +7,22 @@ import (
 
 // User adalah representasi data user di dalam database
 type User struct {
-	ID       int            `json:"id"`
-	Fullname string         `json:"fullname"`
-	Email    string         `json:"email"`
-	Phone    sql.NullString `json:"phone,omitempty"` // omitempty agar tidak muncul jika null
-	Password string         `json:"-"`
-	Photo    sql.NullString `json:"photo,omitempty"` // omitempty agar tidak muncul jika null
+	ID        int       `json:"id"`
+	Fullname  string    `json:"fullname"`
+	Email     string    `json:"email"`
+	Phone     *string   `json:"phone,omitempty"` // omitempty agar tidak muncul jika null
+	Password  string    `json:"-"`
+	Photo     *string   `json:"photo,omitempty"` // omitempty agar tidak muncul jika null
+	CreatedAt time.Time `json:"created_at"`      // <-- TAMBAHKAN INI
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // SignUpRequest adalah data yang kita harapkan dari request API
 type SignUpRequest struct {
-	Fullname string `json:"name"`
-	Email    string `json:"email"`
+	Fullname string `json:"fullname" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
 	Phone    string `json:"phone"`
-	Password string `json:"password"`
+	Password string `json:"password" binding:"required,min=6"`
 }
 
 // ChangePasswordRequest adalah data yang kita harapkan dari request API untuk mengganti password
@@ -66,8 +68,8 @@ type UpdateUserAddressRequest struct {
 
 // TransactionHistoryItem adalah format standar untuk riwayat transaksi gabungan
 type TransactionHistoryItem struct {
-	ID          string         `json:"id"`           // ID unik (misal: "deposit-1", "withdraw-5")
-	Type        string         `json:"type"`         // 'deposit', 'withdraw', 'topup', 'transfer'
+	ID          string         `json:"id"`               // ID unik (misal: "deposit-1", "withdraw-5")
+	Type        string         `json:"type"`             // 'deposit', 'withdraw', 'topup', 'transfer'
 	Amount      sql.NullString `json:"amount,omitempty"` // Jumlah (Rp) untuk withdraw, topup, transfer
 	Points      sql.NullInt32  `json:"points,omitempty"` // Jumlah poin untuk deposit
 	Status      string         `json:"status"`
@@ -89,21 +91,21 @@ type UserWallet struct {
 type UserStatistic struct {
 	ID        int       `json:"id"`
 	UserID    int       `json:"user_id"`
-	Waste     string    `json:"waste"`     // Total sampah (kg), kirim sbg string
-	Energy    string    `json:"energy"`    // Energi dihemat (kWh), kirim sbg string
-	CO2       string    `json:"co2"`       // CO2 terselamatkan (kg), kirim sbg string
-	Water     string    `json:"water"`     // Air dihemat (L), kirim sbg string
-	Tree      int       `json:"tree"`      // Pohon terselamatkan
+	Waste     string    `json:"waste"`  // Total sampah (kg), kirim sbg string
+	Energy    string    `json:"energy"` // Energi dihemat (kWh), kirim sbg string
+	CO2       string    `json:"co2"`    // CO2 terselamatkan (kg), kirim sbg string
+	Water     string    `json:"water"`  // Air dihemat (L), kirim sbg string
+	Tree      int       `json:"tree"`   // Pohon terselamatkan
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // WithdrawRequest data untuk request penarikan saldo
 type WithdrawRequest struct {
-	PaymentMethodID int     `json:"payment_method_id" binding:"required"`
-	AccountNumber   string  `json:"account_number" binding:"required"`
-	Amount          float64 `json:"amount" binding:"required,gt=0"`
-	AccountHolderName string `json:"account_holder_name"`
+	PaymentMethodID   int     `json:"payment_method_id" binding:"required"`
+	AccountNumber     string  `json:"account_number" binding:"required"`
+	Amount            float64 `json:"amount" binding:"required,gt=0"`
+	AccountHolderName string  `json:"account_holder_name"`
 }
 
 // TopupRequest data untuk request top up saldo
@@ -115,7 +117,7 @@ type TopupRequest struct {
 // TransferRequest data untuk request transfer Xpoin
 type TransferRequest struct {
 	RecipientEmail string `json:"recipient_email" binding:"required,email"` // Validasi email
-	Amount         int    `json:"amount" binding:"required,gt=0"`         // Jumlah Xpoin harus > 0
+	Amount         int    `json:"amount" binding:"required,gt=0"`           // Jumlah Xpoin harus > 0
 }
 
 // ConversionRequest data umum untuk request konversi
@@ -155,4 +157,15 @@ type ImpactFactors struct {
 	CO2    float64 // Contoh: kg CO2 per kg
 	Water  float64 // Contoh: Liter per kg
 	Tree   float64 // Contoh: Pohon per kg (nanti dibulatkan)
+}
+
+// GoogleAuthRequest data yang dikirim dari Android setelah login Google
+type GoogleAuthRequest struct {
+	IDToken string `json:"id_token" binding:"required"`
+}
+
+// GoogleAuthResponse data yang dikirim ke Android setelah verifikasi
+type GoogleAuthResponse struct {
+	Token string `json:"token"` // Token JWT Xetor
+	User  *User  `json:"user"`
 }

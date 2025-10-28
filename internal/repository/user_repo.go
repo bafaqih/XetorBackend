@@ -11,6 +11,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/domain/user"
 )
@@ -58,11 +59,11 @@ func (r *UserRepository) Save(u *user.User) error {
 func (r *UserRepository) FindByEmail(email string) (*user.User, error) {
 	// --- PERUBAHAN DI SINI ---
 	// Tambahkan 'photo' ke query SELECT
-	query := "SELECT id, fullname, email, phone, password, photo FROM users WHERE email = $1"
+	query := "SELECT id, fullname, email, phone, password, photo, created_at, updated_at FROM users WHERE email = $1"
 
 	var u user.User
 	// Tambahkan &u.Photo ke Scan
-	err := r.db.QueryRow(query, email).Scan(&u.ID, &u.Fullname, &u.Email, &u.Phone, &u.Password, &u.Photo)
+	err := r.db.QueryRow(query, email).Scan(&u.ID, &u.Fullname, &u.Email, &u.Phone, &u.Password, &u.Photo, &u.CreatedAt, &u.UpdatedAt)
 	// -------------------------
 
 	if err != nil {
@@ -77,10 +78,10 @@ func (r *UserRepository) FindByEmail(email string) (*user.User, error) {
 
 // FindByID mencari user berdasarkan ID
 func (r *UserRepository) FindByID(id int) (*user.User, error) {
-	query := "SELECT id, fullname, email, phone, password, photo FROM users WHERE id = $1"
+	query := "SELECT id, fullname, email, phone, password, photo, created_at, updated_at FROM users WHERE id = $1"
 
 	var u user.User
-	err := r.db.QueryRow(query, id).Scan(&u.ID, &u.Fullname, &u.Email, &u.Phone, &u.Password, &u.Photo)
+	err := r.db.QueryRow(query, id).Scan(&u.ID, &u.Fullname, &u.Email, &u.Phone, &u.Password, &u.Photo, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // Tidak ditemukan
@@ -966,4 +967,50 @@ func (r *UserRepository) UpdateUserStatisticsOnDeposit(userID int, totalWaste fl
     if err != nil { return errors.New("gagal update statistik user") }
     rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return errors.New("statistik user tidak ditemukan") }
     return nil
+}
+
+// --- Google Auth Functions ---
+
+// CreateGoogleUser membuat user baru dari data Google Auth
+func (r *UserRepository) CreateUserFromGoogle(u *user.User) error {
+	randomPassword := uuid.New().String()
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(randomPassword), bcrypt.DefaultCost)
+    if err != nil {
+        log.Printf("Error generating random hash for Google user: %v", err)
+        return errors.New("gagal mengamankan akun Google")
+    }
+
+	queryUsers := `
+        INSERT INTO users (fullname, email, phone, password, photo, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+        RETURNING id, created_at, updated_at`
+
+    err = r.db.QueryRow(queryUsers, u.Fullname, u.Email, u.Phone, string(hashedPassword), u.Photo).Scan(
+        &u.ID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "users_email_key") {
+			return errors.New("email sudah terdaftar (repo)")
+		}
+		log.Printf("Error creating Google user in users table: %v", err)
+		return errors.New("gagal menyimpan user google")
+	}
+	
+	log.Printf("User created from Google Auth with ID: %d", u.ID)
+
+    // 2. Buat Wallet dan Statistik (kita panggil fungsi yg sudah ada)
+    _, err = r.FindOrCreateWalletByUserID(u.ID)
+    if err != nil {
+        log.Printf("Failed to create wallet for Google user ID %d: %v", u.ID, err)
+        // Lanjutkan saja, jangan gagalkan registrasi
+    }
+
+    _, err = r.FindOrCreateStatisticsByUserID(u.ID)
+     if err != nil {
+        log.Printf("Failed to create statistics for Google user ID %d: %v", u.ID, err)
+        // Lanjutkan saja
+    }
+
+	return nil
 }

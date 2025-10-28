@@ -19,6 +19,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/temporary_token"
 	"xetor.id/backend/internal/config"
+	"google.golang.org/api/idtoken"
+	"xetor.id/backend/internal/auth"
 )
 
 const (
@@ -31,6 +33,7 @@ const conversionRateXpToRp = 5.0 // 1 Xp = 5 Rp
 
 type Repository interface {
 	// User-related methods
+	CreateUserFromGoogle(u *User) error
 	Save(user *User) error
 	FindByEmail(email string) (*User, error)
 	FindByID(id int) (*User, error)
@@ -85,7 +88,7 @@ func (s *Service) RegisterUser(req SignUpRequest) error {
 	user := &User{
 		Fullname: req.Fullname,
 		Email:    req.Email,
-		Phone:    sql.NullString{String: req.Phone, Valid: req.Phone != ""},
+		Phone:    stringToPtr(req.Phone),
 		Password: req.Password,
 	}
 
@@ -99,14 +102,14 @@ func (s *Service) ValidateLogin(email, password string) (*User, error) {
 		return nil, err // Error teknis dari database
 	}
 	if user == nil {
-		return nil, errors.New("kredensial tidak valid") // User tidak ditemukan
+		return nil, errors.New("email atau password salah") // User tidak ditemukan
 	}
 
 	// Bandingkan password yang diinput dengan hash di database
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	log.Println("Bcrypt comparison error:", err) // Log untuk debugging
 	if err != nil {
-		return nil, errors.New("kredensial tidak valid") // Password tidak cocok
+		return nil, errors.New("email atau password salah") // Password tidak cocok
 	}
 
 	return user, nil // Kembalikan data user jika berhasil
@@ -561,4 +564,90 @@ func (s *Service) UploadProfilePhoto(userIDStr string, fileHeader *multipart.Fil
 
 	log.Printf("User %d profile photo updated to: %s", userID, photoURL)
 	return photoURL, nil
+}
+
+// --- Google Auth Service Method ---
+
+// verifyGoogleIDToken memvalidasi token ke server Google
+func verifyGoogleIDToken(idToken string) (*idtoken.Payload, error) {
+	googleClientID := config.GetGoogleClientID()
+	ctx := context.Background()
+
+	payload, err := idtoken.Validate(ctx, idToken, googleClientID)
+	if err != nil {
+		log.Printf("Error validating Google ID Token: %v", err)
+		return nil, errors.New("token Google tidak valid atau kedaluwarsa")
+	}
+	return payload, nil
+}
+
+// AuthenticateWithGoogle memproses login/register via Google
+func (s *Service) AuthenticateWithGoogle(idToken string) (string, *User, error) {
+	// 1. Verifikasi token ke Google
+	payload, err := verifyGoogleIDToken(idToken)
+	if err != nil {
+		return "", nil, err // Error: "token Google tidak valid"
+	}
+
+	// 2. Ambil data dari payload Google
+	email := payload.Claims["email"].(string)
+	fullname := payload.Claims["name"].(string)
+	photoURL, _ := payload.Claims["picture"].(string) // Ambil foto, _ jika tidak ada
+
+	if email == "" {
+		return "", nil, errors.New("token Google tidak berisi email")
+	}
+
+	// 3. Cek apakah user sudah ada di DB kita (Sign In)
+	user, err := s.repo.FindByEmail(email)
+	if err != nil {
+		log.Printf("Error finding user by email %s: %v", email, err)
+		return "", nil, errors.New("gagal memeriksa database user")
+	}
+
+	if user != nil {
+		// --- KASUS SIGN IN ---
+		// User ditemukan. Buat token JWT Xetor
+		log.Printf("Google Sign-In: User %s (ID: %d) found.", user.Email, user.ID)
+		token, err := auth.GenerateToken(user.ID, "user")
+		if err != nil {
+			return "", nil, errors.New("gagal membuat sesi login")
+		}
+		user.Password = "" // Hapus hash password
+		return token, user, nil
+	}
+
+	// --- KASUS SIGN UP ---
+	// User tidak ditemukan. Buat user baru.
+	log.Printf("Google Sign-Up: User %s not found, creating new user.", email)
+
+	newUser := &User{
+		Fullname: fullname,
+		Email:    email,
+		Phone:    nil, // Phone tidak didapat dari Google
+		Password: "", // Repo akan handle ini (set ke "google_oauth_user")
+		Photo:    stringToPtr(photoURL),
+	}
+
+	// Simpan user baru ke DB (Repo akan create user + wallet + stats)
+	err = s.repo.CreateUserFromGoogle(newUser)
+	if err != nil {
+		return "", nil, err // Error dari repo (misal: "gagal menyimpan user")
+	}
+
+	// 5. Buat token JWT Xetor untuk user baru
+	token, err := auth.GenerateToken(newUser.ID, "user")
+	if err != nil {
+		return "", nil, errors.New("gagal membuat sesi login untuk user baru")
+	}
+
+	newUser.Password = "" // Hapus placeholder password
+	return token, newUser, nil
+}
+
+func stringToPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s // Mengambil alamat memori dari string
 }

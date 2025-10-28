@@ -21,6 +21,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 	{
 		authRoutes.POST("/register", userHandler.SignUp)
 		authRoutes.POST("/login", userHandler.SignIn)
+		authRoutes.POST("/google", userHandler.GoogleAuth)
 	}
 
 	partnerAuthRoutes := r.Group("/partners")

@@ -31,7 +31,16 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) SignUp(c *gin.Context) {
 	var req SignUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        // Beri pesan error yang lebih baik di sini juga
+        if strings.Contains(err.Error(), "required") {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Harap isi semua field yang wajib diisi."})
+        } else if strings.Contains(err.Error(), "email") {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid."})
+        } else if strings.Contains(err.Error(), "min=6") {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Password minimal 6 karakter."})
+        } else {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Data request tidak valid."})
+        }
 		return
 	}
 
@@ -47,14 +56,20 @@ func (h *Handler) SignUp(c *gin.Context) {
 func (h *Handler) SignIn(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email dan password wajib diisi"})
+        if strings.Contains(err.Error(), "required") {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Email dan password wajib diisi."})
+        } else if strings.Contains(err.Error(), "email") {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid."})
+        } else {
+		    c.JSON(http.StatusBadRequest, gin.H{"error": "Data request tidak valid."})
+        }
 		return
 	}
 
 	// Panggil service untuk validasi dan dapatkan data user
 	user, err := h.service.ValidateLogin(req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": strings.Title(err.Error())})
 		return
 	}
 
@@ -69,9 +84,9 @@ func (h *Handler) SignIn(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
 		"user": gin.H{
-			"id":    user.ID,
-			"name":  user.Fullname,
-			"email": user.Email,
+			"id":       user.ID,
+			"fullname": user.Fullname,
+			"email":    user.Email,
 		},
 	})
 }
@@ -544,5 +559,31 @@ func (h *Handler) UploadProfilePhoto(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Foto profil berhasil diunggah",
 		"photo_url": newPhotoURL,
+	})
+}
+
+// --- Google Auth Handler ---
+
+// GoogleAuth menangani request login/register via Google
+func (h *Handler) GoogleAuth(c *gin.Context) {
+	var req GoogleAuthRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id_token tidak boleh kosong"})
+		return
+	}
+
+	// Panggil service untuk verifikasi dan login/register
+	token, user, err := h.service.AuthenticateWithGoogle(req.IDToken)
+	if err != nil {
+		// Service sudah memberi pesan error yang sesuai
+		log.Printf("Google Auth Error: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Kirim respons sukses (sama seperti login manual)
+	c.JSON(http.StatusOK, GoogleAuthResponse{
+		Token: token,
+		User:  user,
 	})
 }

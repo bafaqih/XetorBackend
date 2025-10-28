@@ -47,3 +47,13 @@ func GetCloudinaryURL() string {
 	}
 	return fmt.Sprintf("cloudinary://%s:%s@%s", apiKey, apiSecret, cloudName)
 }
+
+// GetGoogleClientID mengambil nilai GOOGLE_CLIENT_ID dari environment
+func GetGoogleClientID() string {
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	if clientID == "" {
+		// Log.Fatal akan menghentikan aplikasi jika ID tidak ada
+		log.Fatal("GOOGLE_CLIENT_ID must be set in .env file")
+	}
+	return clientID
+}
