@@ -21,6 +21,7 @@ import (
 	"xetor.id/backend/internal/config"
 	"google.golang.org/api/idtoken"
 	"xetor.id/backend/internal/auth"
+	"xetor.id/backend/internal/notification"
 )
 
 const (
@@ -76,11 +77,12 @@ type Repository interface {
 type Service struct {
 	repo Repository
 	tokenStore *temporary_token.TokenStore
+	notifService *notification.NotificationService
 }
 
 // NewService membuat instance baru dari Service
-func NewService(repo Repository, tokenStore *temporary_token.TokenStore) *Service {
-	return &Service{repo: repo, tokenStore: tokenStore}
+func NewService(repo Repository, tokenStore *temporary_token.TokenStore, notifService *notification.NotificationService) *Service {
+	return &Service{repo: repo, tokenStore: tokenStore, notifService: notifService}
 }
 
 // RegisterUser memproses data dari handler dan menyimpannya
@@ -361,8 +363,14 @@ func (s *Service) RequestWithdrawal(userIDStr string, req WithdrawRequest) (stri
 		return "", fmt.Errorf("gagal memproses penarikan: %w", err)
 	}
 
-	// 4. (Nanti di sini) Panggil API Midtrans Disbursement dengan 'orderID' sebagai referensi
-	// log.Printf("TODO: Call Midtrans Disbursement API for Order ID: %s", orderID)
+	// 4. (Nanti di sini) Panggil API Midtrans
+
+	// --- KIRIM NOTIFIKASI ---
+	go func() {
+		notifTitle := "Penarikan Saldo Diproses"
+		notifBody := fmt.Sprintf("Permintaan penarikan saldo sebesar Rp %.0f sedang diproses.", req.Amount)
+		s.notifService.SendNotification(userID, notifTitle, notifBody, "WITHDRAW_PENDING")
+	}()
 
 	return orderID, nil // Kembalikan Order ID jika sukses
 }
@@ -398,6 +406,12 @@ func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (string, erro
 
 	// 4. (Nanti di sini) Generate Midtrans Snap Token/URL dan kirim ke user
 	// log.Printf("TODO: Generate Midtrans payment details for Order ID: %s", orderID)
+
+	go func() {
+		notifTitle := "Top Up Berhasil"
+		notifBody := fmt.Sprintf("Saldo Anda berhasil ditambah sebesar Rp %.0f.", req.Amount)
+		s.notifService.SendNotification(userID, notifTitle, notifBody, "TOPUP_SUCCESS")
+	}()
 
 	return orderID, nil // Kembalikan Order ID jika sukses
 }
@@ -442,6 +456,34 @@ func (s *Service) TransferXpoin(senderUserIDStr string, req TransferRequest) (st
 		return "", fmt.Errorf("gagal memproses transfer: %w", err)
 	}
 
+	// Notifikasi untuk Pengirim
+	go func() {
+		notifTitle := "Transfer Berhasil"
+		notifBody := fmt.Sprintf("Kamu berhasil mentransfer %d Xpoin ke %s.", req.Amount, req.RecipientEmail)
+		errNotif := s.notifService.SendNotification(senderUserID, notifTitle, notifBody, "TRANSFER_SENT_SUCCESS")
+        if errNotif != nil {
+            log.Printf("Gagal mengirim notifikasi transfer (sent) ke user %d: %v", senderUserID, errNotif)
+        }
+	}()
+
+	// Notifikasi untuk Penerima
+	go func(senderID int, recipientID int, amount int) {
+        // Ambil data pengirim untuk notifikasi
+		senderData, err := s.repo.FindByID(senderID) // Panggil repo untuk data pengirim
+		if err != nil || senderData == nil {
+			log.Printf("Gagal menemukan data pengirim (ID: %d) untuk notifikasi transfer: %v", senderID, err)
+			return // Gagal mengirim notif jika pengirim tidak ditemukan
+		}
+        senderIdentifier := senderData.Fullname // Gunakan nama lengkap pengirim
+
+		notifTitle := "Xpoin Diterima"
+		notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari %s.", amount, senderIdentifier)
+		errNotif := s.notifService.SendNotification(recipientID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
+        if errNotif != nil {
+            log.Printf("Gagal mengirim notifikasi transfer (received) ke user %d: %v", recipientID, errNotif)
+        }
+	}(senderUserID, recipientUserID, req.Amount)
+
 	return orderID, nil // Kembalikan Order ID jika sukses
 }
 
@@ -468,6 +510,12 @@ func (s *Service) ConvertXpToRp(userIDStr string, req ConversionRequest) (*UserW
 		"xp_to_rp", amountXp, amountRp, conversionRateXpToRp,
 	)
 	if err != nil { return nil, err } // Error sudah ditangani repo (misal: xpoin tidak cukup)
+
+	go func() {
+		notifTitle := "Konversi Berhasil"
+		notifBody := fmt.Sprintf("%d Xpoin berhasil dikonversi menjadi Rp %.0f.", amountXp, amountRp)
+		s.notifService.SendNotification(userID, notifTitle, notifBody, "CONVERT_XP_RP_SUCCESS")
+	}()
 
 	return updatedWallet, nil
 }
@@ -501,6 +549,12 @@ func (s *Service) ConvertRpToXp(userIDStr string, req ConversionRequest) (*UserW
 		"rp_to_xp", amountXp, actualAmountRpUsed, conversionRateXpToRp,
 	)
 	if err != nil { return nil, err } // Error sudah ditangani repo (misal: saldo tidak cukup)
+
+	go func() {
+		notifTitle := "Konversi Berhasil"
+		notifBody := fmt.Sprintf("Rp %.0f berhasil dikonversi menjadi %d Xpoin.", actualAmountRpUsed, amountXp)
+		s.notifService.SendNotification(userID, notifTitle, notifBody, "CONVERT_RP_XP_SUCCESS")
+	}()
 
 	return updatedWallet, nil
 }

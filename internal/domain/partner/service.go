@@ -23,6 +23,7 @@ import (
 	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/domain/user"
 	"xetor.id/backend/internal/temporary_token"
+	"xetor.id/backend/internal/notification"
 )
 
 const conversionRateRpToXp = 1.0 / 5.0 // 1 Rp = 0.2 Xp
@@ -112,10 +113,11 @@ type PartnerService struct {
 	userRepo UserRepositoryForPartner
 	tokenStore *temporary_token.TokenStore
 	adminRepo AdminRepositoryForPartner
+	notifService *notification.NotificationService
 }
 
-func NewPartnerService(repo PartnerRepository, userRepo UserRepositoryForPartner, tokenStore *temporary_token.TokenStore, adminRepo AdminRepositoryForPartner)*PartnerService {
-	return &PartnerService{repo: repo, userRepo: userRepo, tokenStore: tokenStore, adminRepo: adminRepo}
+func NewPartnerService(repo PartnerRepository, userRepo UserRepositoryForPartner, tokenStore *temporary_token.TokenStore, adminRepo AdminRepositoryForPartner, notifService *notification.NotificationService) *PartnerService {
+	return &PartnerService{repo: repo, userRepo: userRepo, tokenStore: tokenStore, adminRepo: adminRepo, notifService: notifService}
 }
 
 // RegisterPartner memproses registrasi partner baru
@@ -801,6 +803,16 @@ func (s *PartnerService) RequestPartnerWithdrawal(partnerIDStr string, req Partn
 	// 4. (Nanti di sini) Panggil API Midtrans Disbursement
 	// log.Printf("TODO: Call Midtrans Disbursement API for Partner Withdraw Order ID: %s", orderID)
 
+	go func() {
+		notifTitle := "Penarikan Saldo Diproses"
+		notifBody := fmt.Sprintf("Permintaan penarikan saldo sebesar Rp %.0f sedang diproses.", req.Amount)
+		// Kirim notif ke partnerID
+		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "WITHDRAW_PENDING")
+        if errNotif != nil {
+            log.Printf("Gagal mengirim notifikasi withdraw ke partner %d: %v", partnerID, errNotif)
+        }
+	}()
+
 	return orderID, nil
 }
 
@@ -833,6 +845,14 @@ func (s *PartnerService) RequestPartnerTopup(partnerIDStr string, req PartnerTop
 
 	// 4. (Nanti di sini) Generate Midtrans Snap Token/URL
 	// log.Printf("TODO: Generate Midtrans payment details for Partner Topup Order ID: %s", orderID)
+	go func() {
+		notifTitle := "Top Up Berhasil"
+		notifBody := fmt.Sprintf("Saldo Anda berhasil ditambah sebesar Rp %.0f.", req.Amount)
+		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "TOPUP_SUCCESS")
+        if errNotif != nil {
+            log.Printf("Gagal mengirim notifikasi topup ke partner %d: %v", partnerID, errNotif)
+        }
+	}()
 
 	return orderID, nil
 }
@@ -840,65 +860,109 @@ func (s *PartnerService) RequestPartnerTopup(partnerIDStr string, req PartnerTop
 // --- Partner Transfer Service Method ---
 
 func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTransferRequest) (string, error) {
-    senderPartnerID, err := strconv.Atoi(senderPartnerIDStr)
-    if err != nil { return "", errors.New("ID pengirim tidak valid") }
+	senderPartnerID, err := strconv.Atoi(senderPartnerIDStr)
+	if err != nil { return "", errors.New("ID pengirim tidak valid") }
 
-    // 1. Validasi Input Dasar
-    if req.Amount <= 0 { return "", errors.New("jumlah transfer harus positif") }
+	// 1. Validasi Input Dasar
+	if req.Amount <= 0 { return "", errors.New("jumlah transfer harus positif") }
 
-    // 2. Cari Penerima (Cek Partner dulu, baru User)
-    var recipientUserID *int
-    var recipientPartnerID *int
+	// 2. Cari Penerima (Cek Partner dulu, baru User)
+	var recipientUserID *int
+	var recipientPartnerID *int
+	var recipientName string // Variabel untuk menyimpan nama penerima (untuk notif)
 
-    // Cek di tabel partners
-    recipientPartner, errP := s.repo.FindPartnerByEmail(req.RecipientEmail)
-    if errP != nil && errP != sql.ErrNoRows {
-        return "", errors.New("gagal mencari partner penerima")
-    }
+	// Cek di tabel partners
+	recipientPartner, errP := s.repo.FindPartnerByEmail(req.RecipientEmail)
+	if errP != nil && errP != sql.ErrNoRows {
+		return "", errors.New("gagal mencari partner penerima")
+	}
 
-    if recipientPartner != nil {
-        // Ditemukan sebagai partner
-        if senderPartnerID == recipientPartner.ID { // Cek transfer ke diri sendiri
-            return "", errors.New("tidak bisa transfer ke diri sendiri")
+	if recipientPartner != nil {
+		// Ditemukan sebagai partner
+		if senderPartnerID == recipientPartner.ID { // Cek transfer ke diri sendiri
+			return "", errors.New("tidak bisa transfer ke diri sendiri")
+		}
+		// Pastikan wallet penerima ada
+		_, errWallet := s.repo.FindOrCreateWalletByPartnerID(recipientPartner.ID); if errWallet != nil {
+			return "", fmt.Errorf("gagal memeriksa/membuat wallet partner penerima: %w", errWallet)
+		}
+		id := recipientPartner.ID
+		recipientPartnerID = &id
+		recipientName = recipientPartner.BusinessName // Simpan nama penerima
+	} else {
+		// Jika tidak ketemu di partner, cek di tabel users
+		// Gunakan FindByEmail (return *user.User) untuk dapat nama
+		recipUser, errU := s.userRepo.FindByEmail(req.RecipientEmail)
+		if errU != nil && errU != sql.ErrNoRows {
+			return "", errors.New("gagal mencari user penerima")
+		}
+		if recipUser == nil { // Jika tidak ketemu di user juga (cek nil)
+			return "", errors.New("email penerima tidak ditemukan (baik user maupun partner)")
+		}
+		// Ditemukan sebagai user
+		// Pastikan wallet user penerima ada
+		_, errWallet := s.userRepo.FindOrCreateWalletByUserID(recipUser.ID); if errWallet != nil {
+			return "", fmt.Errorf("gagal memeriksa/membuat wallet user penerima: %w", errWallet)
+		}
+		recipientUserID = &recipUser.ID // Ambil addressnya
+		recipientName = recipUser.Fullname // Simpan nama penerima
+	}
+
+
+	// 3. Pastikan wallet pengirim ada
+	_, err = s.repo.FindOrCreateWalletByPartnerID(senderPartnerID); if err != nil {
+		return "", fmt.Errorf("gagal memeriksa/membuat wallet pengirim: %w", err)
+	}
+
+
+	// 4. Eksekusi Transaksi Database
+	orderID, err := s.repo.ExecutePartnerTransferTransaction(senderPartnerID, req.Amount, recipientUserID, recipientPartnerID, req.RecipientEmail)
+	if err != nil {
+		// Error spesifik (poin tidak cukup, dll) sudah ditangani di repo
+		return "", fmt.Errorf("gagal memproses transfer: %w", err)
+	}
+
+	// --- KIRIM NOTIFIKASI ---
+	// Notifikasi untuk Pengirim (Partner)
+	go func() {
+		notifTitle := "Transfer Berhasil"
+		// Gunakan recipientName yang sudah kita simpan
+		notifBody := fmt.Sprintf("Kamu berhasil mentransfer %d Xpoin ke %s.", req.Amount, recipientName)
+		errNotif := s.notifService.SendNotification(senderPartnerID, notifTitle, notifBody, "TRANSFER_SENT_SUCCESS")
+        if errNotif != nil {
+             log.Printf("Gagal mengirim notifikasi transfer (sent) ke partner %d: %v", senderPartnerID, errNotif)
         }
-        // Pastikan wallet penerima ada
-         _, errWallet := s.repo.FindOrCreateWalletByPartnerID(recipientPartner.ID); if errWallet != nil {
-             return "", fmt.Errorf("gagal memeriksa/membuat wallet partner penerima: %w", errWallet)
-         }
-        id := recipientPartner.ID // Copy id ke var baru agar bisa diambil addressnya
-        recipientPartnerID = &id
-    } else {
-        // Jika tidak ketemu di partner, cek di tabel users
-        recipUserID, errU := s.userRepo.FindUserIDByEmail(req.RecipientEmail) // Panggil userRepo
-        if errU != nil && errU != sql.ErrNoRows {
-            return "", errors.New("gagal mencari user penerima")
+	}()
+
+	// Notifikasi untuk Penerima (bisa User atau Partner)
+	go func() {
+        // Ambil info pengirim (partner)
+        senderData, err := s.repo.FindPartnerByID(senderPartnerID)
+        senderIdentifier := "Partner Xetor" // Default
+        if err == nil && senderData != nil {
+            senderIdentifier = senderData.BusinessName
         }
-        if recipUserID == 0 { // Jika tidak ketemu di user juga
-            return "", errors.New("email penerima tidak ditemukan (baik user maupun partner)")
+
+		notifTitle := "Xpoin Diterima"
+		notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari %s.", req.Amount, senderIdentifier)
+        
+        if recipientUserID != nil {
+            // Kirim ke User
+		    errNotif := s.notifService.SendNotification(*recipientUserID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
+            if errNotif != nil {
+                 log.Printf("Gagal mengirim notifikasi transfer (received) ke user %d: %v", *recipientUserID, errNotif)
+            }
+        } else if recipientPartnerID != nil {
+            // Kirim ke Partner
+            errNotif := s.notifService.SendNotification(*recipientPartnerID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
+            if errNotif != nil {
+                 log.Printf("Gagal mengirim notifikasi transfer (received) ke partner %d: %v", *recipientPartnerID, errNotif)
+            }
         }
-        // Ditemukan sebagai user
-         // Pastikan wallet user penerima ada
-         _, errWallet := s.userRepo.FindOrCreateWalletByUserID(recipUserID); if errWallet != nil {
-             return "", fmt.Errorf("gagal memeriksa/membuat wallet user penerima: %w", errWallet)
-         }
-        recipientUserID = &recipUserID // Ambil addressnya
-    }
+	}()
+	// -------------------------
 
-
-    // 3. Pastikan wallet pengirim ada
-     _, err = s.repo.FindOrCreateWalletByPartnerID(senderPartnerID); if err != nil {
-         return "", fmt.Errorf("gagal memeriksa/membuat wallet pengirim: %w", err)
-     }
-
-
-    // 4. Eksekusi Transaksi Database
-    orderID, err := s.repo.ExecutePartnerTransferTransaction(senderPartnerID, req.Amount, recipientUserID, recipientPartnerID, req.RecipientEmail)
-    if err != nil {
-        // Error spesifik (poin tidak cukup, dll) sudah ditangani di repo
-        return "", fmt.Errorf("gagal memproses transfer: %w", err)
-    }
-
-    return orderID, nil
+	return orderID, nil
 }
 
 // --- Partner Conversion Service Methods ---
@@ -921,6 +985,16 @@ func (s *PartnerService) ConvertXpToRp(partnerIDStr string, req PartnerConversio
 		"xp_to_rp", amountXp, amountRp, conversionRateXpToRp,
 	)
 	if err != nil { return nil, err }
+
+	go func() {
+		notifTitle := "Konversi Berhasil"
+		notifBody := fmt.Sprintf("%d Xpoin berhasil dikonversi menjadi Rp %.0f.", amountXp, amountRp)
+		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "CONVERT_XP_RP_SUCCESS")
+        if errNotif != nil {
+            log.Printf("Gagal mengirim notifikasi convert (xp-rp) ke partner %d: %v", partnerID, errNotif)
+        }
+	}()
+
 	return updatedWallet, nil
 }
 
@@ -943,6 +1017,16 @@ func (s *PartnerService) ConvertRpToXp(partnerIDStr string, req PartnerConversio
 		"rp_to_xp", amountXp, actualAmountRpUsed, conversionRateXpToRp,
 	)
 	if err != nil { return nil, err }
+
+	go func() {
+		notifTitle := "Konversi Berhasil"
+		notifBody := fmt.Sprintf("Rp %.0f berhasil dikonversi menjadi %d Xpoin.", actualAmountRpUsed, amountXp)
+		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "CONVERT_RP_XP_SUCCESS")
+        if errNotif != nil {
+            log.Printf("Gagal mengirim notifikasi convert (rp-xp) ke partner %d: %v", partnerID, errNotif)
+        }
+	}()
+
 	return updatedWallet, nil
 }
 
@@ -1145,6 +1229,12 @@ func (s *PartnerService) CreateDeposit(partnerIDStr string, req CreateDepositReq
         log.Printf("Warning: Failed to update user_deposit_history_id reference for partner deposit %d: %v", depositHeaderID, err)
     }
 
+	// Kirim notifikasi ke USER bahwa deposit berhasil
+    go func() {
+        notifTitle := "Deposit Berhasil!"
+        notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari setoran sampah.", depositArgs.TotalXpoin)
+        s.notifService.SendNotification(req.UserID, notifTitle, notifBody, "DEPOSIT_SUCCESS")
+    }()
 
 	// 10. Kembalikan data header deposit yang baru dibuat
 	// (Untuk sementara kembalikan ID saja, atau bisa buat fungsi GetDepositHeaderByID di repo)
