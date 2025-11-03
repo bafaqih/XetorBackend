@@ -21,3 +21,5 @@ Thumbs.db
 *.pprof
 
 *.cover
+
+firebase-service-account.json
