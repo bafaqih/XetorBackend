@@ -11,6 +11,7 @@ import (
 	"xetor.id/backend/internal/domain/midtrans"
 	"xetor.id/backend/internal/temporary_token"
 	"xetor.id/backend/internal/domain/partner"
+	"xetor.id/backend/internal/notification"
 )
 
 func main() {
@@ -21,6 +22,9 @@ func main() {
 	// Inisialisasi TokenStore untuk token sementara
 	tokenStore := temporary_token.NewTokenStore()
 
+	// Inisialisasi NotificationService
+    notifService := notification.NewNotificationService()
+
 	// Komponen Admin
 	adminRepo := repository.NewAdminRepository(db)
 	adminService := admin.NewAdminService(adminRepo)
@@ -28,12 +32,12 @@ func main() {
 
 	// Komponen User
 	userRepo := repository.NewUserRepository(db)
-	userService := user.NewService(userRepo, tokenStore)
+	userService := user.NewService(userRepo, tokenStore, notifService)
 	userHandler := user.NewHandler(userService)
 
 	// Komponen Partner
 	partnerRepo := repository.NewPartnerRepository(db)
-	partnerService := partner.NewPartnerService(partnerRepo, userRepo, tokenStore, adminRepo)
+	partnerService := partner.NewPartnerService(partnerRepo, userRepo, tokenStore, adminRepo, notifService)
 	partnerHandler := partner.NewPartnerHandler(partnerService)
 
 	// Komponen Midtrans
