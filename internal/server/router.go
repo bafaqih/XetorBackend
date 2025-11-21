@@ -2,11 +2,15 @@
 package server
 
 import (
+	"io"
+	"net/http"
+	"net/url"
+
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/domain/admin"
-	"xetor.id/backend/internal/domain/user"
 	"xetor.id/backend/internal/domain/midtrans"
 	"xetor.id/backend/internal/domain/partner"
+	"xetor.id/backend/internal/domain/user"
 )
 
 func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midtransHandler *midtrans.MidtransHandler, partnerHandler *partner.PartnerHandler) *gin.Engine {
@@ -30,6 +34,56 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 		partnerAuthRoutes.POST("/login", partnerHandler.SignIn)
 	}
 
+	// Public routes (tidak perlu auth)
+	publicRoutes := r.Group("/public")
+	{
+		publicRoutes.GET("/payment-methods", userHandler.GetActivePaymentMethods)
+		publicRoutes.GET("/promotion-banners", userHandler.GetActivePromotionBanners)
+
+		// Proxy sederhana untuk mengambil gambar dari Cloudinary melalui backend.
+		// Tujuan: menghindari masalah koneksi langsung device -> Cloudinary.
+		publicRoutes.GET("/proxy-image", func(c *gin.Context) {
+			imageURL := c.Query("url")
+			if imageURL == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "url parameter is required"})
+				return
+			}
+
+			parsed, err := url.Parse(imageURL)
+			if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
+				return
+			}
+
+			// Opsional: batasi hanya ke domain Cloudinary untuk mencegah open proxy
+			if parsed.Host != "res.cloudinary.com" && parsed.Host != "cloudinary.com" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported host"})
+				return
+			}
+
+			resp, err := http.Get(imageURL)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch image"})
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				c.JSON(resp.StatusCode, gin.H{"error": "failed to fetch image from source"})
+				return
+			}
+
+			// Teruskan Content-Type asli (image/png, image/jpeg, dll)
+			if ct := resp.Header.Get("Content-Type"); ct != "" {
+				c.Header("Content-Type", ct)
+			} else {
+				c.Header("Content-Type", "application/octet-stream")
+			}
+
+			c.Status(http.StatusOK)
+			_, _ = io.Copy(c.Writer, resp.Body)
+		})
+	}
 
 	// Grup routing untuk user yang terotentikasi
 	userRoutes := r.Group("/user")
@@ -47,7 +101,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 		userRoutes.POST("/withdraw", userHandler.RequestWithdrawal)
 		userRoutes.POST("/topup", userHandler.RequestTopup)
 		userRoutes.POST("/transfer", userHandler.TransferXpoin)
-		
+
 		// Rute untuk konversi Xpoin dan Rupiah
 		convertRoutes := userRoutes.Group("/convert")
 		{
@@ -76,11 +130,11 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 
 	// Grup routing untuk partner
 	partnerRoutes := r.Group("/partner")
-    partnerRoutes.Use(AuthMiddleware(), RoleCheckMiddleware("partner"))
-    {
-		 // Ruter untuk profil partner
-        partnerRoutes.GET("/profile", partnerHandler.GetProfile)
-        partnerRoutes.PUT("/profile", partnerHandler.UpdateProfile)
+	partnerRoutes.Use(AuthMiddleware(), RoleCheckMiddleware("partner"))
+	{
+		// Ruter untuk profil partner
+		partnerRoutes.GET("/profile", partnerHandler.GetProfile)
+		partnerRoutes.PUT("/profile", partnerHandler.UpdateProfile)
 		partnerRoutes.POST("/profile/photo", partnerHandler.UploadProfilePhoto)
 		partnerRoutes.PUT("/password", partnerHandler.ChangePassword)
 		partnerRoutes.DELETE("/account", partnerHandler.DeleteAccount)
@@ -90,7 +144,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 		partnerRoutes.POST("/topup", partnerHandler.RequestPartnerTopup)
 		partnerRoutes.POST("/transfer", partnerHandler.TransferXpoin)
 
-		 // Ruter untuk konversi Xpoin dan Rupiah
+		// Ruter untuk konversi Xpoin dan Rupiah
 		convertRoutes := partnerRoutes.Group("/convert")
 		{
 			convertRoutes.POST("/xp-to-rp", partnerHandler.ConvertXpToRp)
@@ -115,10 +169,10 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			wastePriceRoutes.DELETE("/:detail_id", partnerHandler.DeleteWastePrice)
 		}
 
-		 // Ruter untuk riwayat transaksi partner
+		// Ruter untuk riwayat transaksi partner
 		partnerRoutes.GET("/transactions", partnerHandler.GetFinancialTransactionHistory)
-		
-		 // Ruter untuk riwayat deposit partner
+
+		// Ruter untuk riwayat deposit partner
 		depositRoutes := partnerRoutes.Group("/deposit")
 		{
 			depositRoutes.GET("/history", partnerHandler.GetDepositHistory)
@@ -127,8 +181,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			depositRoutes.POST("/create", partnerHandler.CreateDeposit)
 		}
 
-    }
-
+	}
 
 	// Grup routing untuk admin
 	adminRoutes := r.Group("/admin")
@@ -142,7 +195,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			wasteTypeRoutes.PUT("/:id", adminHandler.UpdateWasteType)
 			wasteTypeRoutes.DELETE("/:id", adminHandler.DeleteWasteType)
 		}
-		
+
 		// Rute untuk Waste Details
 		wasteDetailRoutes := adminRoutes.Group("/waste-details")
 		{
@@ -188,7 +241,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 		{
 			aboutRoutes.POST("/", adminHandler.CreateAboutXetor)
 			aboutRoutes.GET("/", adminHandler.GetAllAboutXetor)
-			aboutRoutes.GET("/id/:id", adminHandler.GetAboutXetorByID) // Endpoint by ID
+			aboutRoutes.GET("/id/:id", adminHandler.GetAboutXetorByID)          // Endpoint by ID
 			aboutRoutes.GET("/title/:title", adminHandler.GetAboutXetorByTitle) // Endpoint by Title
 			aboutRoutes.PUT("/:id", adminHandler.UpdateAboutXetor)
 			aboutRoutes.DELETE("/:id", adminHandler.DeleteAboutXetor)
@@ -207,6 +260,6 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 
 	// Grup routing untuk Midtrans Webhook
 	r.POST("/midtrans/notification", midtransHandler.HandleNotification)
-	
+
 	return r
 }

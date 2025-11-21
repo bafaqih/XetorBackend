@@ -2,11 +2,11 @@
 package user
 
 import (
+	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
-	"database/sql"
 	"strings"
-	"log"
 
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/auth"
@@ -31,16 +31,16 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) SignUp(c *gin.Context) {
 	var req SignUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-        // Beri pesan error yang lebih baik di sini juga
-        if strings.Contains(err.Error(), "required") {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Harap isi semua field yang wajib diisi."})
-        } else if strings.Contains(err.Error(), "email") {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid."})
-        } else if strings.Contains(err.Error(), "min=6") {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Password minimal 6 karakter."})
-        } else {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Data request tidak valid."})
-        }
+		// Beri pesan error yang lebih baik di sini juga
+		if strings.Contains(err.Error(), "required") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Harap isi semua field yang wajib diisi."})
+		} else if strings.Contains(err.Error(), "email") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid."})
+		} else if strings.Contains(err.Error(), "min=6") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Password minimal 6 karakter."})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Data request tidak valid."})
+		}
 		return
 	}
 
@@ -56,13 +56,13 @@ func (h *Handler) SignUp(c *gin.Context) {
 func (h *Handler) SignIn(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-        if strings.Contains(err.Error(), "required") {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Email dan password wajib diisi."})
-        } else if strings.Contains(err.Error(), "email") {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid."})
-        } else {
-		    c.JSON(http.StatusBadRequest, gin.H{"error": "Data request tidak valid."})
-        }
+		if strings.Contains(err.Error(), "required") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Email dan password wajib diisi."})
+		} else if strings.Contains(err.Error(), "email") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid."})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Data request tidak valid."})
+		}
 		return
 	}
 
@@ -133,8 +133,8 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		// Service akan mengembalikan pesan error yang sesuai
 		// Kita bisa bedakan error (misal: 400 Bad Request vs 500 Internal Error)
 		if err.Error() == "konfirmasi password baru tidak cocok" ||
-		   err.Error() == "password baru minimal 6 karakter" ||
-		   err.Error() == "password lama salah" {
+			err.Error() == "password baru minimal 6 karakter" ||
+			err.Error() == "password lama salah" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else if err.Error() == "pengguna tidak ditemukan" || err.Error() == "pengguna tidak ditemukan saat update" {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -154,12 +154,14 @@ func (h *Handler) AddUserAddress(c *gin.Context) {
 
 	var req CreateUserAddressRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	address, err := h.service.AddUserAddress(userIDStr.(string), req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan alamat"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan alamat"})
+		return
 	}
 	c.JSON(http.StatusCreated, address)
 }
@@ -169,64 +171,79 @@ func (h *Handler) GetUserAddresses(c *gin.Context) {
 
 	addresses, err := h.service.GetUserAddresses(userIDStr.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil alamat"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil alamat"})
+		return
 	}
 	c.JSON(http.StatusOK, addresses)
 }
 
 func (h *Handler) GetUserAddressByID(c *gin.Context) {
 	userIDStr, _ := c.Get("entityID")
-	id, err := strconv.Atoi(c.Param("id")); if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"}); return
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"})
+		return
 	}
 
 	address, err := h.service.GetUserAddressByID(id, userIDStr.(string))
 	if err != nil {
 		// Service sudah handle error ID tidak valid
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil alamat"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil alamat"})
+		return
 	}
 	if address == nil { // Termasuk jika bukan milik user
-		c.JSON(http.StatusNotFound, gin.H{"error": "Alamat tidak ditemukan atau bukan milik Anda"}); return
+		c.JSON(http.StatusNotFound, gin.H{"error": "Alamat tidak ditemukan atau bukan milik Anda"})
+		return
 	}
 	c.JSON(http.StatusOK, address)
 }
 
 func (h *Handler) UpdateUserAddress(c *gin.Context) {
 	userIDStr, _ := c.Get("entityID")
-	id, err := strconv.Atoi(c.Param("id")); if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"}); return
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"})
+		return
 	}
 
 	var req UpdateUserAddressRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	err = h.service.UpdateUserAddress(id, userIDStr.(string), req)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Alamat tidak ditemukan atau bukan milik Anda"}); return
+			c.JSON(http.StatusNotFound, gin.H{"error": "Alamat tidak ditemukan atau bukan milik Anda"})
+			return
 		}
 		if err.Error() == "tidak ada data untuk diupdate" {
-			 c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengupdate alamat"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengupdate alamat"})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Alamat berhasil diupdate"})
 }
 
 func (h *Handler) DeleteUserAddress(c *gin.Context) {
 	userIDStr, _ := c.Get("entityID")
-	id, err := strconv.Atoi(c.Param("id")); if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"}); return
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID alamat tidak valid"})
+		return
 	}
 
 	err = h.service.DeleteUserAddress(id, userIDStr.(string))
 	if err != nil {
 		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Alamat tidak ditemukan atau bukan milik Anda"}); return
+			c.JSON(http.StatusNotFound, gin.H{"error": "Alamat tidak ditemukan atau bukan milik Anda"})
+			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus alamat"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus alamat"})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Alamat berhasil dihapus"})
 }
@@ -254,24 +271,24 @@ func (h *Handler) GetTransactionHistory(c *gin.Context) {
 
 // DeleteAccount menangani request hapus akun
 func (h *Handler) DeleteAccount(c *gin.Context) {
-    userIDStr, exists := c.Get("entityID")
-    if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
-        return
-    }
+	userIDStr, exists := c.Get("entityID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Gagal mendapatkan ID pengguna dari token"})
+		return
+	}
 
-    err := h.service.DeleteAccount(userIDStr.(string))
-    if err != nil {
-        if err.Error() == "pengguna tidak ditemukan" {
-             c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-        } else {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus akun"})
-        }
-        return
-    }
+	err := h.service.DeleteAccount(userIDStr.(string))
+	if err != nil {
+		if err.Error() == "pengguna tidak ditemukan" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus akun"})
+		}
+		return
+	}
 
-    // TODO: Mungkin perlu invalidate token JWT di sisi client/server? (Opsional)
-    c.JSON(http.StatusOK, gin.H{"message": "Akun berhasil dihapus"})
+	// TODO: Mungkin perlu invalidate token JWT di sisi client/server? (Opsional)
+	c.JSON(http.StatusOK, gin.H{"message": "Akun berhasil dihapus"})
 }
 
 // --- User Wallet Handler ---
@@ -311,6 +328,30 @@ func (h *Handler) GetUserStatistics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+// --- Payment Methods Handler ---
+
+// GetActivePaymentMethods menangani request untuk mengambil daftar payment methods aktif
+func (h *Handler) GetActivePaymentMethods(c *gin.Context) {
+	methods, err := h.service.GetAllActivePaymentMethods()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil metode pembayaran"})
+		return
+	}
+
+	c.JSON(http.StatusOK, methods)
+}
+
+// GetActivePromotionBanners menangani request untuk mengambil daftar promotion banners aktif
+func (h *Handler) GetActivePromotionBanners(c *gin.Context) {
+	banners, err := h.service.GetAllActivePromotionBanners()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil banner promosi"})
+		return
+	}
+
+	c.JSON(http.StatusOK, banners)
 }
 
 // --- User Withdraw Handler ---
@@ -406,9 +447,9 @@ func (h *Handler) TransferXpoin(c *gin.Context) {
 		// Service akan memberikan pesan error yang sesuai
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "tidak mencukupi") ||
-		   strings.Contains(errMsg, "tidak ditemukan") ||
-		   strings.Contains(errMsg, "diri sendiri") ||
-		   strings.Contains(errMsg, "lebih besar dari 0") {
+			strings.Contains(errMsg, "tidak ditemukan") ||
+			strings.Contains(errMsg, "diri sendiri") ||
+			strings.Contains(errMsg, "lebih besar dari 0") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses transfer"})
@@ -428,20 +469,23 @@ func (h *Handler) ConvertXpToRp(c *gin.Context) {
 	userIDStr, _ := c.Get("entityID")
 	var req ConversionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	updatedWallet, err := h.service.ConvertXpToRp(userIDStr.(string), req)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "angka bulat") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Konversi Xpoin ke Rupiah berhasil",
-		"wallet": updatedWallet,
+		"wallet":  updatedWallet,
 	})
 }
 
@@ -449,20 +493,23 @@ func (h *Handler) ConvertRpToXp(c *gin.Context) {
 	userIDStr, _ := c.Get("entityID")
 	var req ConversionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	updatedWallet, err := h.service.ConvertRpToXp(userIDStr.(string), req)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "terlalu kecil") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Konversi Rupiah ke Xpoin berhasil",
-		"wallet": updatedWallet,
+		"wallet":  updatedWallet,
 	})
 }
 

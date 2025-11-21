@@ -126,15 +126,18 @@ type PromotionBanner struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
-// CreatePromotionBannerRequest data untuk membuat PromotionBanner baru
+// CreatePromotionBannerRequest data untuk membuat PromotionBanner baru.
+// Untuk kompatibilitas, struct ini masih ada tetapi field Image tidak lagi wajib
+// karena sekarang admin mengunggah file gambar (multipart/form-data).
 type CreatePromotionBannerRequest struct {
-	Name   string `json:"name" binding:"required"`
-	Image  string `json:"image" binding:"required"` // URL gambar wajib
-	Link   string `json:"link"`                     // Link opsional
+	Name   string `json:"name"`
+	Image  string `json:"image"` // Tidak lagi digunakan untuk input; diisi otomatis setelah upload
+	Link   string `json:"link"`  // Link opsional
 	Status string `json:"status"`
 }
 
-// UpdatePromotionBannerRequest data untuk mengupdate PromotionBanner
+// UpdatePromotionBannerRequest data untuk mengupdate PromotionBanner.
+// Field Image bisa di-update lewat URL langsung atau lewat mekanisme upload terpisah (jika ditambahkan nanti).
 type UpdatePromotionBannerRequest struct {
 	Name   string `json:"name"`
 	Image  string `json:"image"`

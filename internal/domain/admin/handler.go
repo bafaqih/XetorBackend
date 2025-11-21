@@ -2,10 +2,15 @@ package admin
 
 import (
 	"database/sql"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"xetor.id/backend/internal/config"
 )
 
 type AdminHandler struct {
@@ -314,13 +319,67 @@ func (h *AdminHandler) DeleteDepositMethod(c *gin.Context) {
 // --- Promotion Banner Handlers ---
 
 func (h *AdminHandler) CreatePromotionBanner(c *gin.Context) {
-	var req CreatePromotionBannerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+	// Terima multipart/form-data:
+	// - name (string, required)
+	// - link (string, optional)
+	// - status (string, optional; default "Active")
+	// - image (file, required)
+	name := c.PostForm("name")
+	link := c.PostForm("link")
+	status := c.PostForm("status")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name wajib diisi"})
+		return
 	}
-	banner, err := h.service.CreatePromotionBanner(req)
+
+	fileHeader, err := c.FormFile("image")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan banner promosi"}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file image wajib diunggah"})
+		return
+	}
+
+	// Simpan file ke storage lokal (VPS) di folder banners
+	basePath := config.GetMediaBasePath()
+	bannerDir := filepath.Join(basePath, "banners")
+	if err := os.MkdirAll(bannerDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan penyimpanan banner"})
+		return
+	}
+
+	src, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca file banner"})
+		return
+	}
+	defer src.Close()
+
+	ext := filepath.Ext(fileHeader.Filename)
+	if ext == "" {
+		ext = ".jpg"
+	}
+	filename := fmt.Sprintf("banner_%d%s",  // nama sementara, akan tetap unik per upload
+		fileHeader.Size, ext)
+	fullPath := filepath.Join(bannerDir, filename)
+
+	dst, err := os.Create(fullPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file banner"})
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file banner"})
+		return
+	}
+
+	cdnBase := config.GetCDNBaseURL()
+	imageURL := fmt.Sprintf("%s/banners/%s", cdnBase, filename)
+
+	banner, err := h.service.CreatePromotionBannerWithImage(name, imageURL, link, status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan banner promosi"})
+		return
 	}
 	c.JSON(http.StatusCreated, banner)
 }

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"database/sql"
+	"errors"
 )
 
 // Definisikan interface agar service tidak bergantung langsung pada implementasi repo
@@ -194,12 +195,24 @@ func (s *AdminService) DeleteDepositMethod(id int) error {
 
 // --- Promotion Banner Service Methods ---
 
-func (s *AdminService) CreatePromotionBanner(req CreatePromotionBannerRequest) (*PromotionBanner, error) {
+// CreatePromotionBannerWithImage membuat banner promosi baru menggunakan URL gambar yang sudah dihasilkan.
+// Handler bertanggung jawab mengunggah file gambar ke storage dan meneruskan URL ke fungsi ini.
+func (s *AdminService) CreatePromotionBannerWithImage(name, imageURL, link, status string) (*PromotionBanner, error) {
+	if name == "" {
+		return nil, errors.New("nama banner wajib diisi")
+	}
+	if imageURL == "" {
+		return nil, errors.New("URL gambar banner tidak boleh kosong")
+	}
+	if status == "" {
+		status = "Active"
+	}
+
 	pb := &PromotionBanner{
-		Name:   req.Name,
-		Image:  req.Image,
-		Link:   sql.NullString{String: req.Link, Valid: req.Link != ""},
-		Status: req.Status,
+		Name:  name,
+		Image: imageURL,
+		Link:  sql.NullString{String: link, Valid: link != ""},
+		Status: status,
 	}
 	err := s.repo.CreatePromotionBanner(pb)
 	if err != nil { return nil, err }

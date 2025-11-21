@@ -169,3 +169,22 @@ type GoogleAuthResponse struct {
 	Token string `json:"token"` // Token JWT Xetor
 	User  *User  `json:"user"`
 }
+
+// PaymentMethod untuk validasi withdraw/topup
+type PaymentMethod struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}
+
+// PromotionBanner untuk menampilkan banner promosi di home
+type PromotionBanner struct {
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Image     string    `json:"image"` // URL gambar banner
+	Link      string    `json:"link,omitempty"` // Link tujuan jika banner diklik (opsional)
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

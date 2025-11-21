@@ -1,33 +1,32 @@
 package partner
 
 import (
-	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
-	"mime/multipart"
-	"strconv"
-	"regexp"
-	"strings"
 	"math"
-	"time"
+	"mime/multipart"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
-	"encoding/json"
+	"strconv"
+	"strings"
+	"time"
 
-
-	"github.com/cloudinary/cloudinary-go/v2"
-	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 	"golang.org/x/crypto/bcrypt"
 	"xetor.id/backend/internal/auth" // Import JWT generator
 	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/domain/user"
-	"xetor.id/backend/internal/temporary_token"
 	"xetor.id/backend/internal/notification"
+	"xetor.id/backend/internal/temporary_token"
 )
 
 const conversionRateRpToXp = 1.0 / 5.0 // 1 Rp = 0.2 Xp
-const conversionRateXpToRp = 5.0   // 1 Xp = 5 Rp
+const conversionRateXpToRp = 5.0       // 1 Xp = 5 Rp
 
 const (
 	minWithdrawalAmount = 10000.0
@@ -80,7 +79,7 @@ type PartnerRepository interface {
 	// Withdrawal execution
 	GetPartnerCurrentBalanceByID(partnerID int) (float64, error)
 	ExecutePartnerWithdrawTransaction(partnerID int, amountToDeduct float64, fee float64, paymentMethodID int, accountNumber string) (string, error)
-	
+
 	// Topup execution
 	ExecutePartnerTopupTransaction(partnerID int, amountToAdd float64, paymentMethodID int) (string, error)
 
@@ -97,22 +96,22 @@ type PartnerRepository interface {
 }
 
 type UserRepositoryForPartner interface {
-	 FindByEmail(email string) (*user.User, error)
-     FindOrCreateWalletByUserID(userID int) (*user.UserWallet, error)
-	 FindUserIDByEmail(email string) (int, error)
-     FindByID(id int) (*user.User, error)
-	 AddDepositHistory(userID, partnerID, totalPoints int, depositTime time.Time) (int, error)
-	 UpdateUserWalletOnDeposit(userID, pointsToAdd int) error
-	 GetWasteDetailFactors(wasteDetailIDs []int) (map[int]user.ImpactFactors, error) // Return type dari model user
-	 UpdateUserStatisticsOnDeposit(userID int, totalWaste float64, energySaved, co2Saved, waterSaved float64, treesSaved int) error
-	 FindOrCreateStatisticsByUserID(userID int) (*user.UserStatistic, error) // Pastikan ini ada
+	FindByEmail(email string) (*user.User, error)
+	FindOrCreateWalletByUserID(userID int) (*user.UserWallet, error)
+	FindUserIDByEmail(email string) (int, error)
+	FindByID(id int) (*user.User, error)
+	AddDepositHistory(userID, partnerID, totalPoints int, depositTime time.Time) (int, error)
+	UpdateUserWalletOnDeposit(userID, pointsToAdd int) error
+	GetWasteDetailFactors(wasteDetailIDs []int) (map[int]user.ImpactFactors, error) // Return type dari model user
+	UpdateUserStatisticsOnDeposit(userID int, totalWaste float64, energySaved, co2Saved, waterSaved float64, treesSaved int) error
+	FindOrCreateStatisticsByUserID(userID int) (*user.UserStatistic, error) // Pastikan ini ada
 }
 
 type PartnerService struct {
-	repo PartnerRepository
-	userRepo UserRepositoryForPartner
-	tokenStore *temporary_token.TokenStore
-	adminRepo AdminRepositoryForPartner
+	repo         PartnerRepository
+	userRepo     UserRepositoryForPartner
+	tokenStore   *temporary_token.TokenStore
+	adminRepo    AdminRepositoryForPartner
 	notifService *notification.NotificationService
 }
 
@@ -173,7 +172,9 @@ func (s *PartnerService) LoginPartner(req PartnerLoginRequest) (string, string, 
 			log.Printf("Error checking partner status for ID %d: %v", partner.ID, err)
 			return "", "", errors.New("gagal memeriksa status partner")
 		}
-        if status == "" { status = "Not Registered" }
+		if status == "" {
+			status = "Not Registered"
+		}
 	}
 
 	// 4. Buat token JWT
@@ -188,15 +189,21 @@ func (s *PartnerService) LoginPartner(req PartnerLoginRequest) (string, string, 
 }
 
 func (s *PartnerService) GetProfile(partnerIDStr string) (*Partner, error) {
-    partnerID, err := strconv.Atoi(partnerIDStr)
-    if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
-    partner, err := s.repo.FindPartnerByID(partnerID)
-    if err != nil { return nil, errors.New("gagal mengambil profil partner") }
-    if partner == nil { return nil, errors.New("partner tidak ditemukan") }
+	partner, err := s.repo.FindPartnerByID(partnerID)
+	if err != nil {
+		return nil, errors.New("gagal mengambil profil partner")
+	}
+	if partner == nil {
+		return nil, errors.New("partner tidak ditemukan")
+	}
 
-    partner.Password = "" // Jangan kirim hash
-    return partner, nil
+	partner.Password = "" // Jangan kirim hash
+	return partner, nil
 }
 
 // UpdateProfile memproses update data profil partner
@@ -239,40 +246,42 @@ func (s *PartnerService) UploadProfilePhoto(partnerIDStr string, fileHeader *mul
 	}
 	defer file.Close()
 
-	// 2. Setup Cloudinary
-	cldURL := config.GetCloudinaryURL()
-	cld, err := cloudinary.NewFromURL(cldURL)
+	// 2. Simpan file ke storage lokal (VPS)
+	basePath := config.GetMediaBasePath()
+	partnerDir := filepath.Join(basePath, "profile", "partners")
+	if err := os.MkdirAll(partnerDir, 0755); err != nil {
+		log.Printf("Error creating partner profile photo directory: %v", err)
+		return "", errors.New("gagal menyiapkan penyimpanan foto")
+	}
+
+	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	if ext == "" {
+		ext = ".jpg"
+	}
+	filename := fmt.Sprintf("%d%s", partnerID, ext)
+	fullPath := filepath.Join(partnerDir, filename)
+
+	dst, err := os.Create(fullPath)
 	if err != nil {
-		log.Printf("Error initializing Cloudinary: %v", err)
-		return "", errors.New("gagal terhubung ke penyedia penyimpanan foto")
+		log.Printf("Error creating destination file for partner %d photo: %v", partnerID, err)
+		return "", errors.New("gagal menyimpan file foto")
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Error copying uploaded photo to destination for partner %d: %v", partnerID, err)
+		return "", errors.New("gagal menyimpan file foto")
 	}
 
-	// 3. Tentukan parameter upload (termasuk folder)
-	overwrite := true
-	uploadParams := uploader.UploadParams{
-		Folder:    "xetor/partners",                     // Simpan di folder xetor/partners
-		PublicID:  fmt.Sprintf("profile_%d", partnerID), // Nama file unik (opsional, Cloudinary bisa generate)
-		Overwrite: &overwrite,                           // Timpa file lama jika ada
-		Format:    "jpg",                                // Contoh: konversi ke jpg
-		// Transformation: "...", // Bisa tambahkan transformasi (resize, crop, dll)
-	}
+	// 3. Bangun URL publik berbasis CDN
+	cdnBase := config.GetCDNBaseURL()
+	photoURL := fmt.Sprintf("%s/profile/partners/%s", cdnBase, filename)
 
-	// 4. Upload ke Cloudinary
-	ctx := context.Background()
-	uploadResult, err := cld.Upload.Upload(ctx, file, uploadParams)
-	if err != nil {
-		log.Printf("Error uploading to Cloudinary: %v", err)
-		return "", errors.New("gagal mengunggah foto")
-	}
-
-	// 5. Update URL foto di database
-	photoURL := uploadResult.SecureURL // Gunakan SecureURL (HTTPS)
+	// 4. Update URL foto di database
 	err = s.repo.UpdatePartnerPhotoURL(partnerID, photoURL)
 	if err != nil {
-		// Jika DB gagal, idealnya kita coba hapus file di Cloudinary (rollback manual)
-		log.Printf("DB update failed after Cloudinary upload for partner %d: %v", partnerID, err)
-		// cld.Upload.Destroy(...) // Implementasi rollback jika perlu
-		return "", err // Error dari repo (partner not found atau DB error)
+		log.Printf("DB update failed after saving partner photo for partner %d: %v", partnerID, err)
+		return "", errors.New("gagal mengupdate URL foto di database")
 	}
 
 	log.Printf("Partner %d profile photo updated to: %s", partnerID, photoURL)
@@ -291,25 +300,37 @@ func (s *PartnerService) ChangePassword(partnerIDStr string, req ChangePasswordR
 
 	// 2. Konversi partnerID
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return errors.New("ID partner tidak valid") }
+	if err != nil {
+		return errors.New("ID partner tidak valid")
+	}
 
 	// 3. Ambil hash password saat ini
 	currentPasswordHash, err := s.repo.GetCurrentPasswordHashByID(partnerID)
-	if err != nil { return err }
-	if currentPasswordHash == "" { return errors.New("partner tidak ditemukan") }
+	if err != nil {
+		return err
+	}
+	if currentPasswordHash == "" {
+		return errors.New("partner tidak ditemukan")
+	}
 
 	// 4. Bandingkan password lama
 	err = bcrypt.CompareHashAndPassword([]byte(currentPasswordHash), []byte(req.OldPassword))
-	if err != nil { return errors.New("password lama salah") }
+	if err != nil {
+		return errors.New("password lama salah")
+	}
 
 	// 5. Hash password baru
 	newHashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil { return errors.New("gagal memproses password baru") }
+	if err != nil {
+		return errors.New("gagal memproses password baru")
+	}
 
 	// 6. Update password di DB
 	err = s.repo.UpdatePassword(partnerID, string(newHashedPassword))
 	if err != nil {
-		if err == sql.ErrNoRows { return errors.New("partner tidak ditemukan saat update") }
+		if err == sql.ErrNoRows {
+			return errors.New("partner tidak ditemukan saat update")
+		}
 		return err
 	}
 	return nil // Sukses
@@ -320,10 +341,14 @@ func (s *PartnerService) ChangePassword(partnerIDStr string, req ChangePasswordR
 // GetAddress mengambil alamat usaha partner
 func (s *PartnerService) GetAddress(partnerIDStr string) (*PartnerAddress, error) {
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return nil, errors.New("ID partner tidak valid") }
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	address, err := s.repo.GetAddressByPartnerID(partnerID)
-	if err != nil { return nil, errors.New("gagal mengambil alamat usaha") }
+	if err != nil {
+		return nil, errors.New("gagal mengambil alamat usaha")
+	}
 	// Tidak perlu cek nil, handler akan handle 404 jika address == nil
 	return address, nil
 }
@@ -331,7 +356,9 @@ func (s *PartnerService) GetAddress(partnerIDStr string) (*PartnerAddress, error
 // UpdateAddress membuat atau memperbarui alamat usaha partner
 func (s *PartnerService) UpdateAddress(partnerIDStr string, req UpdatePartnerAddressRequest) (*PartnerAddress, error) {
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return nil, errors.New("ID partner tidak valid") }
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	addr := &PartnerAddress{
 		PartnerID:   partnerID,
@@ -342,7 +369,9 @@ func (s *PartnerService) UpdateAddress(partnerIDStr string, req UpdatePartnerAdd
 	}
 
 	err = s.repo.UpsertAddress(addr)
-	if err != nil { return nil, err } // Repo sudah handle error
+	if err != nil {
+		return nil, err
+	} // Repo sudah handle error
 
 	// Kembalikan data alamat yang baru disimpan (termasuk ID dan timestamp)
 	return addr, nil
@@ -352,10 +381,15 @@ func (s *PartnerService) UpdateAddress(partnerIDStr string, req UpdatePartnerAdd
 
 // GetSchedule mengambil jadwal operasional partner (single row)
 func (s *PartnerService) GetSchedule(partnerIDStr string) (*PartnerSchedule, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	schedule, err := s.repo.GetScheduleByPartnerID(partnerID)
-	if err != nil { return nil, errors.New("gagal mengambil jadwal operasional") }
+	if err != nil {
+		return nil, errors.New("gagal mengambil jadwal operasional")
+	}
 
 	// Jika belum ada jadwal, kembalikan struct kosong tapi valid, bukan nil
 	if schedule == nil {
@@ -366,54 +400,66 @@ func (s *PartnerService) GetSchedule(partnerIDStr string) (*PartnerSchedule, err
 
 // UpdateSchedule membuat/memperbarui jadwal operasional partner (single row)
 func (s *PartnerService) UpdateSchedule(partnerIDStr string, req UpdateScheduleRequest) (*PartnerSchedule, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { /* ... */ }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil { /* ... */
+	}
 
 	// 1. Ambil jadwal yang ada SEKARANG (jika ada)
 	currentSchedule, err := s.repo.GetScheduleByPartnerID(partnerID)
-	if err != nil { return nil, errors.New("gagal mengambil jadwal saat ini") }
+	if err != nil {
+		return nil, errors.New("gagal mengambil jadwal saat ini")
+	}
 	// Jika belum ada, buat struct default
 	if currentSchedule == nil {
 		currentSchedule = &PartnerSchedule{PartnerID: partnerID, OperatingStatus: "Closed"} // Default jika belum ada
 	}
-
 
 	// 2. Validasi input & tentukan nilai baru (gunakan nilai lama jika request kosong)
 	timeRegex := regexp.MustCompile(`^([01]\d|2[0-3]):([0-5]\d)$`)
 	validStatuses := map[string]bool{"Open": true, "Closed": true}
 
 	finalDaysOpen := currentSchedule.DaysOpen // Default: pakai yg lama
-	if len(req.DaysOpen) > 0 { // Hanya proses jika DaysOpen dikirim
-        // Validasi hari (ambil dari kode sebelumnya)
-        validDays := map[string]bool{"Senin": true, "Selasa": true, "Rabu": true, "Kamis": true, "Jumat": true, "Sabtu": true, "Minggu": true}
-        uniqueDays := make(map[string]bool)
-        validDaysList := []string{}
-        for _, day := range req.DaysOpen {
-            trimmedDay := strings.TrimSpace(day)
-            if !validDays[trimmedDay] { return nil, fmt.Errorf("nama hari tidak valid: %s", trimmedDay) }
-            if !uniqueDays[trimmedDay] { uniqueDays[trimmedDay] = true; validDaysList = append(validDaysList, trimmedDay) }
-        }
-        finalDaysOpen = validDaysList
+	if len(req.DaysOpen) > 0 {                // Hanya proses jika DaysOpen dikirim
+		// Validasi hari (ambil dari kode sebelumnya)
+		validDays := map[string]bool{"Senin": true, "Selasa": true, "Rabu": true, "Kamis": true, "Jumat": true, "Sabtu": true, "Minggu": true}
+		uniqueDays := make(map[string]bool)
+		validDaysList := []string{}
+		for _, day := range req.DaysOpen {
+			trimmedDay := strings.TrimSpace(day)
+			if !validDays[trimmedDay] {
+				return nil, fmt.Errorf("nama hari tidak valid: %s", trimmedDay)
+			}
+			if !uniqueDays[trimmedDay] {
+				uniqueDays[trimmedDay] = true
+				validDaysList = append(validDaysList, trimmedDay)
+			}
+		}
+		finalDaysOpen = validDaysList
 	}
-
 
 	finalOpenTime := currentSchedule.OpenTime // Default: pakai yg lama
 	if req.OpenTime != "" {
-		if !timeRegex.MatchString(req.OpenTime) { return nil, errors.New("format jam buka tidak valid (HH:MM)") }
+		if !timeRegex.MatchString(req.OpenTime) {
+			return nil, errors.New("format jam buka tidak valid (HH:MM)")
+		}
 		finalOpenTime = req.OpenTime
 	}
 
 	finalCloseTime := currentSchedule.CloseTime // Default: pakai yg lama
 	if req.CloseTime != "" {
-		if !timeRegex.MatchString(req.CloseTime) { return nil, errors.New("format jam tutup tidak valid (HH:MM)") }
+		if !timeRegex.MatchString(req.CloseTime) {
+			return nil, errors.New("format jam tutup tidak valid (HH:MM)")
+		}
 		finalCloseTime = req.CloseTime
 	}
 
-    finalOpStatus := currentSchedule.OperatingStatus // Default: pakai yg lama
+	finalOpStatus := currentSchedule.OperatingStatus // Default: pakai yg lama
 	if req.OperatingStatus != "" {
-		if !validStatuses[req.OperatingStatus] { return nil, errors.New("status operasional tidak valid (Open/Closed)") }
+		if !validStatuses[req.OperatingStatus] {
+			return nil, errors.New("status operasional tidak valid (Open/Closed)")
+		}
 		finalOpStatus = req.OperatingStatus
 	}
-
 
 	// Siapkan data final untuk disimpan
 	schedToSave := &PartnerSchedule{
@@ -426,7 +472,9 @@ func (s *PartnerService) UpdateSchedule(partnerIDStr string, req UpdateScheduleR
 
 	// Panggil repo untuk upsert
 	err = s.repo.UpsertSchedule(schedToSave)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	return schedToSave, nil
 }
@@ -441,54 +489,74 @@ func calculateXpoin(price float64) int {
 	return int(math.Floor(price * conversionRateRpToXp))
 }
 
-// uploadWastePriceImage mengupload gambar ke cloudinary
+// uploadWastePriceImage menyimpan gambar harga sampah ke storage lokal (VPS) dan mengembalikan URL CDN
 func (s *PartnerService) uploadWastePriceImage(partnerID int, detailID int, fileHeader *multipart.FileHeader) (string, error) {
 	if fileHeader == nil {
 		return "", nil // Tidak ada file yg diupload
 	}
 	file, err := fileHeader.Open()
-	if err != nil { return "", errors.New("gagal membaca file gambar") }
+	if err != nil {
+		return "", errors.New("gagal membaca file gambar")
+	}
 	defer file.Close()
 
-	cldURL := config.GetCloudinaryURL()
-	cld, err := cloudinary.NewFromURL(cldURL)
-	if err != nil { return "", errors.New("gagal terhubung ke penyedia penyimpanan foto") }
+	// Tentukan direktori dan nama file di storage lokal
+	basePath := config.GetMediaBasePath()
+	wasteDir := filepath.Join(basePath, "waste_prices")
+	if err := os.MkdirAll(wasteDir, 0755); err != nil {
+		log.Printf("Error creating waste price image directory: %v", err)
+		return "", errors.New("gagal menyiapkan penyimpanan gambar sampah")
+	}
 
-	// Nama file unik di Cloudinary (misal: waste_price_<partnerID>_<detailID>)
-	publicID := fmt.Sprintf("waste_price_%d_%d", partnerID, detailID)
+	// Nama file unik (misal: waste_price_<partnerID>_<detailID> atau pakai timestamp)
+	filename := fmt.Sprintf("waste_price_%d_%d", partnerID, detailID)
 	if detailID == 0 { // Jika ini adalah create (belum punya detailID)
-		publicID = fmt.Sprintf("waste_price_%d_new_%d", partnerID, time.Now().UnixNano()) // Gunakan timestamp
+		filename = fmt.Sprintf("waste_price_%d_new_%d", partnerID, time.Now().UnixNano()) // Gunakan timestamp
 	}
 
-
-	uploadParams := uploader.UploadParams{
-		Folder:         "xetor/waste_prices",
-		PublicID:       publicID,
-		Overwrite:      func() *bool { b := true; return &b }(),
-		Format:         "jpg", // Atau biarkan Cloudinary deteksi otomatis
+	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	if ext == "" {
+		ext = ".jpg"
 	}
+	filename = filename + ext
+	fullPath := filepath.Join(wasteDir, filename)
 
-	ctx := context.Background()
-	uploadResult, err := cld.Upload.Upload(ctx, file, uploadParams)
+	dst, err := os.Create(fullPath)
 	if err != nil {
-		log.Printf("Error uploading waste price image to Cloudinary: %v", err)
-		return "", errors.New("gagal mengunggah gambar sampah")
+		log.Printf("Error creating destination file for waste price image: %v", err)
+		return "", errors.New("gagal menyimpan gambar sampah")
 	}
-	return uploadResult.SecureURL, nil
-}
+	defer dst.Close()
 
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Error copying waste price image to destination: %v", err)
+		return "", errors.New("gagal menyimpan gambar sampah")
+	}
+
+	// Bangun URL publik berbasis CDN
+	cdnBase := config.GetCDNBaseURL()
+	imageURL := fmt.Sprintf("%s/waste_prices/%s", cdnBase, filename)
+	return imageURL, nil
+}
 
 // CreateWastePrice menambahkan item harga sampah baru
 func (s *PartnerService) CreateWastePrice(partnerIDStr string, req WastePriceRequest, imageFile *multipart.FileHeader) (*PartnerWastePriceDetail, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	// Validasi dasar
-	if req.Price <= 0 { return nil, errors.New("harga harus positif") }
+	if req.Price <= 0 {
+		return nil, errors.New("harga harus positif")
+	}
 	// TODO: Validasi unit?
 
 	// Dapatkan atau buat header
 	headerID, err := s.repo.FindOrCreateWastePriceHeader(partnerID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	xpoin := calculateXpoin(req.Price)
 
 	detail := &PartnerWastePriceDetail{
@@ -501,14 +569,20 @@ func (s *PartnerService) CreateWastePrice(partnerIDStr string, req WastePriceReq
 	}
 
 	imageURL, err := s.uploadWastePriceImage(partnerID, 0, imageFile)
-	if err != nil { return nil, err }
-	if imageURL != "" { detail.Image = sql.NullString{String: imageURL, Valid: true} }
+	if err != nil {
+		return nil, err
+	}
+	if imageURL != "" {
+		detail.Image = sql.NullString{String: imageURL, Valid: true}
+	}
 
 	err = s.repo.CreateWastePriceDetail(detail)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	if detail.WasteDetailID.Valid { // Hanya jika WasteDetailID valid
-		go func(wdID int) { 
+		go func(wdID int) {
 			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
 			if errRecalc != nil {
 				log.Printf("Error triggering xpoin recalculation after create for waste_detail_id %d: %v", wdID, errRecalc)
@@ -517,23 +591,35 @@ func (s *PartnerService) CreateWastePrice(partnerIDStr string, req WastePriceReq
 	}
 
 	// Ambil data lagi untuk response agar WasteDetailID terisi jika NULL
-    return s.repo.GetWastePriceDetailByID(detail.ID, partnerID)
+	return s.repo.GetWastePriceDetailByID(detail.ID, partnerID)
 }
 
 // GetAllWastePrices mengambil semua item harga sampah partner
 func (s *PartnerService) GetAllWastePrices(partnerIDStr string) ([]PartnerWastePriceDetail, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 	details, err := s.repo.GetWastePriceDetailsByPartnerID(partnerID)
-	if err != nil { return nil, errors.New("gagal mengambil daftar harga sampah") }
-	if details == nil { return []PartnerWastePriceDetail{}, nil } // Return array kosong
+	if err != nil {
+		return nil, errors.New("gagal mengambil daftar harga sampah")
+	}
+	if details == nil {
+		return []PartnerWastePriceDetail{}, nil
+	} // Return array kosong
 	return details, nil
 }
 
 // GetWastePriceByID mengambil satu item harga
 func (s *PartnerService) GetWastePriceByID(detailID int, partnerIDStr string) (*PartnerWastePriceDetail, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 	detail, err := s.repo.GetWastePriceDetailByID(detailID, partnerID)
-	if err != nil { return nil, errors.New("gagal mengambil detail harga sampah") }
+	if err != nil {
+		return nil, errors.New("gagal mengambil detail harga sampah")
+	}
 	// Tidak perlu cek nil, repo sudah handle
 	return detail, nil
 }
@@ -556,23 +642,29 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 
 	// Simpan WasteDetailID lama SEBELUM update
 	oldWasteDetailID := existingDetail.WasteDetailID
-	
-	// Siapkan data update
-	updateData := &PartnerWastePriceDetail{ ID: detailID, Image: sql.NullString{Valid: false} }
-	needsUpdate := false
-	xpoinNeedsRecalc := false // Flag apakah xpoin berubah
-    var newWasteDetailID sql.NullInt32 // Tampung ID baru jika ada
 
-	if req.Name != "" { updateData.Name = req.Name; needsUpdate = true }
-	if req.Unit != "" { updateData.Unit = req.Unit; needsUpdate = true }
+	// Siapkan data update
+	updateData := &PartnerWastePriceDetail{ID: detailID, Image: sql.NullString{Valid: false}}
+	needsUpdate := false
+	xpoinNeedsRecalc := false          // Flag apakah xpoin berubah
+	var newWasteDetailID sql.NullInt32 // Tampung ID baru jika ada
+
+	if req.Name != "" {
+		updateData.Name = req.Name
+		needsUpdate = true
+	}
+	if req.Unit != "" {
+		updateData.Unit = req.Unit
+		needsUpdate = true
+	}
 	if req.WasteDetailID != nil {
 		// TODO: Validasi *req.WasteDetailID?
 		newWasteDetailID = sql.NullInt32{Int32: int32(*req.WasteDetailID), Valid: true}
 		updateData.WasteDetailID = newWasteDetailID // Set ID baru untuk update repo
 		needsUpdate = true
 	} else {
-        newWasteDetailID = oldWasteDetailID // Jika tidak diupdate, pakai yg lama
-    }
+		newWasteDetailID = oldWasteDetailID // Jika tidak diupdate, pakai yg lama
+	}
 	if req.Price > 0 {
 		// Harga diupdate
 		updateData.Price = fmt.Sprintf("%.2f", req.Price)
@@ -586,7 +678,9 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 	}
 
 	imageURL, err := s.uploadWastePriceImage(partnerID, detailID, imageFile)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if imageURL != "" {
 		updateData.Image = sql.NullString{String: imageURL, Valid: true}
 		needsUpdate = true
@@ -599,41 +693,45 @@ func (s *PartnerService) UpdateWastePrice(detailID int, partnerIDStr string, req
 	}
 
 	err = s.repo.UpdateWastePriceDetail(detailID, partnerID, updateData)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Kalkulasi ulang untuk ID lama DAN ID baru jika berbeda
 	if oldWasteDetailID.Valid && oldWasteDetailID != newWasteDetailID {
 		go func(wdID int) {
 			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
-            if errRecalc != nil {
-                log.Printf("Error recalculating xpoin for old waste_detail_id %d: %v", wdID, errRecalc)
-            }
+			if errRecalc != nil {
+				log.Printf("Error recalculating xpoin for old waste_detail_id %d: %v", wdID, errRecalc)
+			}
 		}(int(oldWasteDetailID.Int32))
 	}
-    // Selalu kalkulasi ulang untuk ID baru (atau ID lama jika tidak berubah)
+	// Selalu kalkulasi ulang untuk ID baru (atau ID lama jika tidak berubah)
 	if newWasteDetailID.Valid {
 		go func(wdID int) {
 			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
-            if errRecalc != nil {
-                log.Printf("Error recalculating xpoin for new waste_detail_id %d: %v", wdID, errRecalc)
-            }
+			if errRecalc != nil {
+				log.Printf("Error recalculating xpoin for new waste_detail_id %d: %v", wdID, errRecalc)
+			}
 		}(int(newWasteDetailID.Int32))
 	} else if xpoinNeedsRecalc && oldWasteDetailID.Valid { // Jika hanya xpoin berubah, kalkulasi ID lama
-         go func(wdID int) {
+		go func(wdID int) {
 			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
-            if errRecalc != nil {
-                log.Printf("Error recalculating xpoin (price changed) for waste_detail_id %d: %v", wdID, errRecalc)
-            }
+			if errRecalc != nil {
+				log.Printf("Error recalculating xpoin (price changed) for waste_detail_id %d: %v", wdID, errRecalc)
+			}
 		}(int(oldWasteDetailID.Int32))
-    }
+	}
 
 	return s.repo.GetWastePriceDetailByID(detailID, partnerID) // Ambil data terbaru
 }
 
-
 // DeleteWastePrice menghapus item harga sampah
 func (s *PartnerService) DeleteWastePrice(detailID int, partnerIDStr string) error {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return errors.New("ID partner tidak valid")
+	}
 
 	// Ambil data detail SEBELUM dihapus untuk mendapatkan WasteDetailID
 	detailToDelete, err := s.repo.GetWastePriceDetailByID(detailID, partnerID)
@@ -645,15 +743,17 @@ func (s *PartnerService) DeleteWastePrice(detailID int, partnerIDStr string) err
 	// TODO: Hapus gambar dari Cloudinary?
 
 	err = s.repo.DeleteWastePriceDetail(detailID, partnerID)
-	if err != nil { return err } // Repo handle not found
+	if err != nil {
+		return err
+	} // Repo handle not found
 
 	// --- PANGGIL KALKULASI SETELAH SUKSES DELETE ---
 	if wasteDetailIDToRecalc.Valid { // Hanya jika ada WasteDetailID
 		go func(wdID int) {
 			errRecalc := s.adminRepo.RecalculateAndUpdateWasteDetailXpoin(wdID)
-            if errRecalc != nil {
-                log.Printf("Error recalculating xpoin after delete for waste_detail_id %d: %v", wdID, errRecalc)
-            }
+			if errRecalc != nil {
+				log.Printf("Error recalculating xpoin after delete for waste_detail_id %d: %v", wdID, errRecalc)
+			}
 		}(int(wasteDetailIDToRecalc.Int32))
 	}
 	return nil
@@ -664,27 +764,36 @@ func (s *PartnerService) DeleteWastePrice(detailID int, partnerIDStr string) err
 // GetFinancialTransactionHistory menggabungkan riwayat withdraw, topup, convert, transfer
 func (s *PartnerService) GetFinancialTransactionHistory(partnerIDStr string) ([]PartnerTransactionHistoryItem, error) {
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return nil, errors.New("ID partner tidak valid") }
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	allTransactions := make([]PartnerTransactionHistoryItem, 0)
 
 	// Ambil data dari masing-masing tabel (handle error per jenis)
 	withdrawHistory, errW := s.repo.GetWithdrawHistoryForPartner(partnerID)
-	if errW != nil { log.Printf("Error getting withdraw history for partner %d: %v", partnerID, errW) }
+	if errW != nil {
+		log.Printf("Error getting withdraw history for partner %d: %v", partnerID, errW)
+	}
 	allTransactions = append(allTransactions, withdrawHistory...)
 
 	topupHistory, errT := s.repo.GetTopupHistoryForPartner(partnerID)
-	if errT != nil { log.Printf("Error getting topup history for partner %d: %v", partnerID, errT) }
+	if errT != nil {
+		log.Printf("Error getting topup history for partner %d: %v", partnerID, errT)
+	}
 	allTransactions = append(allTransactions, topupHistory...)
 
 	convertHistory, errC := s.repo.GetConversionHistoryForPartner(partnerID)
-	if errC != nil { log.Printf("Error getting conversion history for partner %d: %v", partnerID, errC) }
+	if errC != nil {
+		log.Printf("Error getting conversion history for partner %d: %v", partnerID, errC)
+	}
 	allTransactions = append(allTransactions, convertHistory...)
 
 	transferHistory, errTr := s.repo.GetTransferHistoryForPartner(partnerID)
-	if errTr != nil { log.Printf("Error getting transfer history for partner %d: %v", partnerID, errTr) }
+	if errTr != nil {
+		log.Printf("Error getting transfer history for partner %d: %v", partnerID, errTr)
+	}
 	allTransactions = append(allTransactions, transferHistory...)
-
 
 	// Urutkan semua transaksi berdasarkan waktu (terbaru dulu)
 	sort.SliceStable(allTransactions, func(i, j int) bool {
@@ -698,10 +807,15 @@ func (s *PartnerService) GetFinancialTransactionHistory(partnerIDStr string) ([]
 
 // GetDepositHistory mengambil riwayat setoran sampah partner
 func (s *PartnerService) GetDepositHistory(partnerIDStr string) ([]DepositHistoryHeader, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	history, err := s.repo.GetDepositHistoryByPartnerID(partnerID)
-	if err != nil { return nil, errors.New("gagal mengambil riwayat deposit") }
+	if err != nil {
+		return nil, errors.New("gagal mengambil riwayat deposit")
+	}
 
 	// Repo sudah handle jika kosong (return array kosong)
 	return history, nil
@@ -710,11 +824,15 @@ func (s *PartnerService) GetDepositHistory(partnerIDStr string) ([]DepositHistor
 // DeleteAccount menghapus akun partner
 func (s *PartnerService) DeleteAccount(partnerIDStr string) error {
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return errors.New("ID partner tidak valid") }
+	if err != nil {
+		return errors.New("ID partner tidak valid")
+	}
 
 	err = s.repo.DeletePartnerByID(partnerID)
 	if err != nil {
-		 if err == sql.ErrNoRows { return errors.New("partner tidak ditemukan") }
+		if err == sql.ErrNoRows {
+			return errors.New("partner tidak ditemukan")
+		}
 		return err // Error teknis repo
 	}
 	return nil // Sukses
@@ -725,7 +843,9 @@ func (s *PartnerService) DeleteAccount(partnerIDStr string) error {
 // GetPartnerWallet mengambil data wallet partner (membuat jika belum ada)
 func (s *PartnerService) GetPartnerWallet(partnerIDStr string) (*PartnerWallet, error) {
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return nil, errors.New("ID partner tidak valid") }
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	wallet, err := s.repo.FindOrCreateWalletByPartnerID(partnerID)
 	if err != nil {
@@ -739,7 +859,9 @@ func (s *PartnerService) GetPartnerWallet(partnerIDStr string) (*PartnerWallet, 
 // GetPartnerStatistics mengambil data statistik partner (membuat jika belum ada)
 func (s *PartnerService) GetPartnerStatistics(partnerIDStr string) (*PartnerStatistic, error) {
 	partnerID, err := strconv.Atoi(partnerIDStr)
-	if err != nil { return nil, errors.New("ID partner tidak valid") }
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	// 1. Ambil data dasar (waste, transaction)
 	stats, err := s.repo.GetBaseStatisticsByPartnerID(partnerID) // Panggil fungsi repo yang baru
@@ -748,11 +870,10 @@ func (s *PartnerService) GetPartnerStatistics(partnerIDStr string) (*PartnerStat
 	}
 	// Pastikan stats tidak nil (repo sudah handle create jika belum ada)
 	if stats == nil {
-	    // Ini seharusnya tidak terjadi jika repo bekerja
-	    log.Printf("Error: GetBaseStatisticsByPartnerID returned nil unexpectedly for partner %d", partnerID)
-	    return nil, errors.New("gagal membuat data statistik dasar partner")
+		// Ini seharusnya tidak terjadi jika repo bekerja
+		log.Printf("Error: GetBaseStatisticsByPartnerID returned nil unexpectedly for partner %d", partnerID)
+		return nil, errors.New("gagal membuat data statistik dasar partner")
 	}
-
 
 	// 2. Ambil jumlah unique customer
 	customerCount, err := s.repo.CountUniqueCustomersByPartnerID(partnerID)
@@ -774,7 +895,10 @@ func (s *PartnerService) GetPartnerStatistics(partnerIDStr string) (*PartnerStat
 
 // RequestPartnerWithdrawal memproses permintaan penarikan saldo partner
 func (s *PartnerService) RequestPartnerWithdrawal(partnerIDStr string, req PartnerWithdrawRequest) (string, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return "", errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return "", errors.New("ID partner tidak valid")
+	}
 
 	// 1. Validasi Input Dasar
 	if req.Amount < minWithdrawalAmount {
@@ -808,9 +932,9 @@ func (s *PartnerService) RequestPartnerWithdrawal(partnerIDStr string, req Partn
 		notifBody := fmt.Sprintf("Permintaan penarikan saldo sebesar Rp %.0f sedang diproses.", req.Amount)
 		// Kirim notif ke partnerID
 		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "WITHDRAW_PENDING")
-        if errNotif != nil {
-            log.Printf("Gagal mengirim notifikasi withdraw ke partner %d: %v", partnerID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi withdraw ke partner %d: %v", partnerID, errNotif)
+		}
 	}()
 
 	return orderID, nil
@@ -820,7 +944,10 @@ func (s *PartnerService) RequestPartnerWithdrawal(partnerIDStr string, req Partn
 
 // RequestPartnerTopup memproses permintaan top up saldo partner (simulasi)
 func (s *PartnerService) RequestPartnerTopup(partnerIDStr string, req PartnerTopupRequest) (string, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return "", errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return "", errors.New("ID partner tidak valid")
+	}
 
 	// 1. Validasi Input Dasar
 	if req.Amount <= 0 {
@@ -849,9 +976,9 @@ func (s *PartnerService) RequestPartnerTopup(partnerIDStr string, req PartnerTop
 		notifTitle := "Top Up Berhasil"
 		notifBody := fmt.Sprintf("Saldo Anda berhasil ditambah sebesar Rp %.0f.", req.Amount)
 		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "TOPUP_SUCCESS")
-        if errNotif != nil {
-            log.Printf("Gagal mengirim notifikasi topup ke partner %d: %v", partnerID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi topup ke partner %d: %v", partnerID, errNotif)
+		}
 	}()
 
 	return orderID, nil
@@ -861,10 +988,14 @@ func (s *PartnerService) RequestPartnerTopup(partnerIDStr string, req PartnerTop
 
 func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTransferRequest) (string, error) {
 	senderPartnerID, err := strconv.Atoi(senderPartnerIDStr)
-	if err != nil { return "", errors.New("ID pengirim tidak valid") }
+	if err != nil {
+		return "", errors.New("ID pengirim tidak valid")
+	}
 
 	// 1. Validasi Input Dasar
-	if req.Amount <= 0 { return "", errors.New("jumlah transfer harus positif") }
+	if req.Amount <= 0 {
+		return "", errors.New("jumlah transfer harus positif")
+	}
 
 	// 2. Cari Penerima (Cek Partner dulu, baru User)
 	var recipientUserID *int
@@ -883,7 +1014,8 @@ func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTra
 			return "", errors.New("tidak bisa transfer ke diri sendiri")
 		}
 		// Pastikan wallet penerima ada
-		_, errWallet := s.repo.FindOrCreateWalletByPartnerID(recipientPartner.ID); if errWallet != nil {
+		_, errWallet := s.repo.FindOrCreateWalletByPartnerID(recipientPartner.ID)
+		if errWallet != nil {
 			return "", fmt.Errorf("gagal memeriksa/membuat wallet partner penerima: %w", errWallet)
 		}
 		id := recipientPartner.ID
@@ -901,19 +1033,19 @@ func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTra
 		}
 		// Ditemukan sebagai user
 		// Pastikan wallet user penerima ada
-		_, errWallet := s.userRepo.FindOrCreateWalletByUserID(recipUser.ID); if errWallet != nil {
+		_, errWallet := s.userRepo.FindOrCreateWalletByUserID(recipUser.ID)
+		if errWallet != nil {
 			return "", fmt.Errorf("gagal memeriksa/membuat wallet user penerima: %w", errWallet)
 		}
-		recipientUserID = &recipUser.ID // Ambil addressnya
+		recipientUserID = &recipUser.ID    // Ambil addressnya
 		recipientName = recipUser.Fullname // Simpan nama penerima
 	}
 
-
 	// 3. Pastikan wallet pengirim ada
-	_, err = s.repo.FindOrCreateWalletByPartnerID(senderPartnerID); if err != nil {
+	_, err = s.repo.FindOrCreateWalletByPartnerID(senderPartnerID)
+	if err != nil {
 		return "", fmt.Errorf("gagal memeriksa/membuat wallet pengirim: %w", err)
 	}
-
 
 	// 4. Eksekusi Transaksi Database
 	orderID, err := s.repo.ExecutePartnerTransferTransaction(senderPartnerID, req.Amount, recipientUserID, recipientPartnerID, req.RecipientEmail)
@@ -929,36 +1061,36 @@ func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTra
 		// Gunakan recipientName yang sudah kita simpan
 		notifBody := fmt.Sprintf("Kamu berhasil mentransfer %d Xpoin ke %s.", req.Amount, recipientName)
 		errNotif := s.notifService.SendNotification(senderPartnerID, notifTitle, notifBody, "TRANSFER_SENT_SUCCESS")
-        if errNotif != nil {
-             log.Printf("Gagal mengirim notifikasi transfer (sent) ke partner %d: %v", senderPartnerID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi transfer (sent) ke partner %d: %v", senderPartnerID, errNotif)
+		}
 	}()
 
 	// Notifikasi untuk Penerima (bisa User atau Partner)
 	go func() {
-        // Ambil info pengirim (partner)
-        senderData, err := s.repo.FindPartnerByID(senderPartnerID)
-        senderIdentifier := "Partner Xetor" // Default
-        if err == nil && senderData != nil {
-            senderIdentifier = senderData.BusinessName
-        }
+		// Ambil info pengirim (partner)
+		senderData, err := s.repo.FindPartnerByID(senderPartnerID)
+		senderIdentifier := "Partner Xetor" // Default
+		if err == nil && senderData != nil {
+			senderIdentifier = senderData.BusinessName
+		}
 
 		notifTitle := "Xpoin Diterima"
 		notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari %s.", req.Amount, senderIdentifier)
-        
-        if recipientUserID != nil {
-            // Kirim ke User
-		    errNotif := s.notifService.SendNotification(*recipientUserID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
-            if errNotif != nil {
-                 log.Printf("Gagal mengirim notifikasi transfer (received) ke user %d: %v", *recipientUserID, errNotif)
-            }
-        } else if recipientPartnerID != nil {
-            // Kirim ke Partner
-            errNotif := s.notifService.SendNotification(*recipientPartnerID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
-            if errNotif != nil {
-                 log.Printf("Gagal mengirim notifikasi transfer (received) ke partner %d: %v", *recipientPartnerID, errNotif)
-            }
-        }
+
+		if recipientUserID != nil {
+			// Kirim ke User
+			errNotif := s.notifService.SendNotification(*recipientUserID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
+			if errNotif != nil {
+				log.Printf("Gagal mengirim notifikasi transfer (received) ke user %d: %v", *recipientUserID, errNotif)
+			}
+		} else if recipientPartnerID != nil {
+			// Kirim ke Partner
+			errNotif := s.notifService.SendNotification(*recipientPartnerID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
+			if errNotif != nil {
+				log.Printf("Gagal mengirim notifikasi transfer (received) ke partner %d: %v", *recipientPartnerID, errNotif)
+			}
+		}
 	}()
 	// -------------------------
 
@@ -968,7 +1100,10 @@ func (s *PartnerService) TransferXpoin(senderPartnerIDStr string, req PartnerTra
 // --- Partner Conversion Service Methods ---
 
 func (s *PartnerService) ConvertXpToRp(partnerIDStr string, req PartnerConversionRequest) (*PartnerWallet, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	amountXp := int(req.Amount)
 	if float64(amountXp) != req.Amount || amountXp <= 0 {
@@ -978,53 +1113,68 @@ func (s *PartnerService) ConvertXpToRp(partnerIDStr string, req PartnerConversio
 	amountRp := float64(amountXp) * conversionRateXpToRp
 
 	_, err = s.repo.FindOrCreateWalletByPartnerID(partnerID) // Pastikan wallet ada
-	if err != nil { return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err)
+	}
 
 	updatedWallet, err := s.repo.ExecutePartnerConversionTransaction(
 		partnerID, -amountXp, amountRp,
 		"xp_to_rp", amountXp, amountRp, conversionRateXpToRp,
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	go func() {
 		notifTitle := "Konversi Berhasil"
 		notifBody := fmt.Sprintf("%d Xpoin berhasil dikonversi menjadi Rp %.0f.", amountXp, amountRp)
 		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "CONVERT_XP_RP_SUCCESS")
-        if errNotif != nil {
-            log.Printf("Gagal mengirim notifikasi convert (xp-rp) ke partner %d: %v", partnerID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi convert (xp-rp) ke partner %d: %v", partnerID, errNotif)
+		}
 	}()
 
 	return updatedWallet, nil
 }
 
 func (s *PartnerService) ConvertRpToXp(partnerIDStr string, req PartnerConversionRequest) (*PartnerWallet, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	amountRp := req.Amount
-	if amountRp <= 0 { return nil, errors.New("jumlah Rupiah harus positif") }
+	if amountRp <= 0 {
+		return nil, errors.New("jumlah Rupiah harus positif")
+	}
 
 	amountXp := int(math.Floor(amountRp / conversionRateXpToRp))
-	if amountXp <= 0 { return nil, errors.New("jumlah Rupiah terlalu kecil untuk dikonversi") }
+	if amountXp <= 0 {
+		return nil, errors.New("jumlah Rupiah terlalu kecil untuk dikonversi")
+	}
 
 	actualAmountRpUsed := float64(amountXp) * conversionRateXpToRp
 
 	_, err = s.repo.FindOrCreateWalletByPartnerID(partnerID) // Pastikan wallet ada
-	if err != nil { return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err)
+	}
 
 	updatedWallet, err := s.repo.ExecutePartnerConversionTransaction(
 		partnerID, amountXp, -actualAmountRpUsed,
 		"rp_to_xp", amountXp, actualAmountRpUsed, conversionRateXpToRp,
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	go func() {
 		notifTitle := "Konversi Berhasil"
 		notifBody := fmt.Sprintf("Rp %.0f berhasil dikonversi menjadi %d Xpoin.", actualAmountRpUsed, amountXp)
 		errNotif := s.notifService.SendNotification(partnerID, notifTitle, notifBody, "CONVERT_RP_XP_SUCCESS")
-        if errNotif != nil {
-            log.Printf("Gagal mengirim notifikasi convert (rp-xp) ke partner %d: %v", partnerID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi convert (rp-xp) ke partner %d: %v", partnerID, errNotif)
+		}
 	}()
 
 	return updatedWallet, nil
@@ -1065,84 +1215,119 @@ func (s *PartnerService) VerifyDepositQrToken(req VerifyQrTokenRequest) (*Verify
 
 // CheckUserByEmail mencari user berdasarkan email
 func (s *PartnerService) CheckUserByEmail(req CheckUserRequest) (*CheckUserResponse, error) {
-    // Panggil userRepo yang sudah di-inject
-    userData, err := s.userRepo.FindByEmail(req.Email)
-    if err != nil {
-        // Hanya log error teknis, jangan kirim detailnya
-        log.Printf("Error checking user by email %s: %v", req.Email, err)
-        return nil, errors.New("gagal memeriksa pengguna")
-    }
-    if userData == nil {
-        return nil, errors.New("pengguna dengan email tersebut tidak ditemukan")
-    }
+	// Panggil userRepo yang sudah di-inject
+	userData, err := s.userRepo.FindByEmail(req.Email)
+	if err != nil {
+		// Hanya log error teknis, jangan kirim detailnya
+		log.Printf("Error checking user by email %s: %v", req.Email, err)
+		return nil, errors.New("gagal memeriksa pengguna")
+	}
+	if userData == nil {
+		return nil, errors.New("pengguna dengan email tersebut tidak ditemukan")
+	}
 
-    // Siapkan respons
-    response := &CheckUserResponse{
-        UserID:   userData.ID,
-        Fullname: userData.Fullname,
-        Email:    userData.Email,
-    }
-    return response, nil
+	// Siapkan respons
+	response := &CheckUserResponse{
+		UserID:   userData.ID,
+		Fullname: userData.Fullname,
+		Email:    userData.Email,
+	}
+	return response, nil
 }
 
 // --- Partner Deposit Creation Service ---
 
-// uploadDepositImage - Fungsi BARU khusus untuk foto bukti deposit
+// uploadDepositImage menyimpan foto bukti deposit ke storage lokal (VPS) dan mengembalikan URL CDN
 func (s *PartnerService) uploadDepositImage(partnerID int, userID int, fileHeader *multipart.FileHeader) (string, error) {
-	if fileHeader == nil { return "", nil } // Tidak ada file
-	file, err := fileHeader.Open(); if err != nil { return "", errors.New("gagal membaca file bukti deposit") }
+	if fileHeader == nil {
+		return "", nil
+	} // Tidak ada file
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", errors.New("gagal membaca file bukti deposit")
+	}
 	defer file.Close()
 
-	cldURL := config.GetCloudinaryURL()
-	cld, err := cloudinary.NewFromURL(cldURL); if err != nil { return "", errors.New("gagal init cloudinary") }
-
-	// Nama file unik untuk bukti deposit
-	publicID := fmt.Sprintf("deposit_%d_%d_%d", partnerID, userID, time.Now().UnixNano())
-
-	overwrite := true // Atau false jika tidak ingin menimpa?
-	uploadParams := uploader.UploadParams{
-		Folder:         "xetor/deposits", // Folder khusus deposit
-		PublicID:       publicID,
-		Overwrite:      &overwrite,
-		Format:         "jpg",
+	// Simpan ke storage lokal di folder deposit_photos
+	basePath := config.GetMediaBasePath()
+	depositDir := filepath.Join(basePath, "deposit_photos")
+	if err := os.MkdirAll(depositDir, 0755); err != nil {
+		log.Printf("Error creating deposit photos directory: %v", err)
+		return "", errors.New("gagal menyiapkan penyimpanan foto deposit")
 	}
 
-	ctx := context.Background()
-	uploadResult, err := cld.Upload.Upload(ctx, file, uploadParams)
-	if err != nil { return "", errors.New("gagal upload bukti deposit ke cloudinary") }
-	return uploadResult.SecureURL, nil
+	filename := fmt.Sprintf("deposit_%d_%d_%d", partnerID, userID, time.Now().UnixNano())
+	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	if ext == "" {
+		ext = ".jpg"
+	}
+	filename = filename + ext
+	fullPath := filepath.Join(depositDir, filename)
+
+	dst, err := os.Create(fullPath)
+	if err != nil {
+		log.Printf("Error creating destination file for deposit photo: %v", err)
+		return "", errors.New("gagal menyimpan foto deposit")
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Error copying deposit photo to destination: %v", err)
+		return "", errors.New("gagal menyimpan foto deposit")
+	}
+
+	cdnBase := config.GetCDNBaseURL()
+	imageURL := fmt.Sprintf("%s/deposit_photos/%s", cdnBase, filename)
+	return imageURL, nil
 }
 
 // CreateDeposit memproses pembuatan setoran sampah baru
 func (s *PartnerService) CreateDeposit(partnerIDStr string, req CreateDepositRequest, imageFile *multipart.FileHeader) (*DepositHistoryHeader, error) {
-	partnerID, err := strconv.Atoi(partnerIDStr); if err != nil { return nil, errors.New("ID partner tidak valid") }
+	partnerID, err := strconv.Atoi(partnerIDStr)
+	if err != nil {
+		return nil, errors.New("ID partner tidak valid")
+	}
 
 	// 1. Unmarshal & Validasi Items JSON
 	var itemsInput []DepositWasteItem
-	if err := json.Unmarshal([]byte(req.ItemsJSON), &itemsInput); err != nil { return nil, errors.New("format data item sampah tidak valid") }
-	if len(itemsInput) == 0 { return nil, errors.New("minimal harus ada satu item sampah") }
+	if err := json.Unmarshal([]byte(req.ItemsJSON), &itemsInput); err != nil {
+		return nil, errors.New("format data item sampah tidak valid")
+	}
+	if len(itemsInput) == 0 {
+		return nil, errors.New("minimal harus ada satu item sampah")
+	}
 
 	// 2. Validasi User & Deposit Method ID
 	userData, err := s.userRepo.FindByID(req.UserID)
-	if err != nil || userData == nil { return nil, errors.New("ID pengguna tidak valid atau tidak ditemukan") }
+	if err != nil || userData == nil {
+		return nil, errors.New("ID pengguna tidak valid atau tidak ditemukan")
+	}
 	// TODO: Validasi req.DepositMethodID (ambil dari DB master data)
 
 	// 3. Kalkulasi Total, Kumpulkan ID Detail, Cek Xpoin Partner
 	totalWeight, totalXpoin := 0.0, 0
-	wasteDetailIDs := []int{}             // Kumpulkan ID waste_details untuk ambil faktor
+	wasteDetailIDs := []int{}               // Kumpulkan ID waste_details untuk ambil faktor
 	calculatedItems := []DepositWasteItem{} // Simpan item dgn data lengkap
 
-	partnerWallet, errWallet := s.repo.FindOrCreateWalletByPartnerID(partnerID);
-	if errWallet != nil { return nil, errors.New("gagal memeriksa wallet partner")}
+	partnerWallet, errWallet := s.repo.FindOrCreateWalletByPartnerID(partnerID)
+	if errWallet != nil {
+		return nil, errors.New("gagal memeriksa wallet partner")
+	}
 
 	for _, item := range itemsInput {
-		if item.Weight <= 0 { return nil, fmt.Errorf("berat item tidak valid") }
+		if item.Weight <= 0 {
+			return nil, fmt.Errorf("berat item tidak valid")
+		}
 
 		priceInfo, err := s.repo.GetWastePriceInfoForCalculation(item.PartnerWastePriceDetailID, partnerID)
-		if err != nil { return nil, fmt.Errorf("gagal mengambil info harga untuk item ID %d: %w", item.PartnerWastePriceDetailID, err)}
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengambil info harga untuk item ID %d: %w", item.PartnerWastePriceDetailID, err)
+		}
 
 		itemXpoin := int(math.Floor(item.Weight * float64(priceInfo.XpoinPerUnit))) // Asumsi XpoinPerUnit per KG
-		if itemXpoin < 0 { itemXpoin = 0 }
+		if itemXpoin < 0 {
+			itemXpoin = 0
+		}
 
 		totalWeight += item.Weight
 		totalXpoin += itemXpoin
@@ -1160,81 +1345,95 @@ func (s *PartnerService) CreateDeposit(partnerIDStr string, req CreateDepositReq
 		return nil, errors.New("xpoin partner tidak mencukupi untuk transaksi ini")
 	}
 
-
 	// 4. Ambil Faktor Konversi Statistik User
 	factorsMap, err := s.userRepo.GetWasteDetailFactors(wasteDetailIDs)
-	if err != nil { log.Printf("Warning: Failed to get waste detail factors: %v", err); factorsMap = make(map[int]user.ImpactFactors) }
-
+	if err != nil {
+		log.Printf("Warning: Failed to get waste detail factors: %v", err)
+		factorsMap = make(map[int]user.ImpactFactors)
+	}
 
 	// 5. Hitung Dampak Lingkungan
 	totalEnergySaved, totalCo2Saved, totalWaterSaved, totalTreesSaved := 0.0, 0.0, 0.0, 0.0
 	for _, item := range calculatedItems {
-		 if item.WasteDetailID.Valid {
-			 detailID := int(item.WasteDetailID.Int32)
-			 if factors, ok := factorsMap[detailID]; ok {
-				 totalEnergySaved += item.Weight * factors.Energy
-				 totalCo2Saved += item.Weight * factors.CO2
-				 totalWaterSaved += item.Weight * factors.Water
-				 totalTreesSaved += item.Weight * factors.Tree
-			 }
-		 }
+		if item.WasteDetailID.Valid {
+			detailID := int(item.WasteDetailID.Int32)
+			if factors, ok := factorsMap[detailID]; ok {
+				totalEnergySaved += item.Weight * factors.Energy
+				totalCo2Saved += item.Weight * factors.CO2
+				totalWaterSaved += item.Weight * factors.Water
+				totalTreesSaved += item.Weight * factors.Tree
+			}
+		}
 	}
 	treesSavedInt := int(math.Round(totalTreesSaved))
 
 	// 6. Upload Foto Deposit (jika ada) - gunakan fungsi baru
 	imageURL, err := s.uploadDepositImage(partnerID, req.UserID, imageFile)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	photoURLDB := sql.NullString{String: imageURL, Valid: imageURL != ""}
 
 	// 7. Siapkan Argumen untuk Transaksi Utama Partner
 	transactionTime := time.Now()
 	depositArgs := ArgsDepositCreation{ // Gunakan struct dari model partner
-		PartnerID:        partnerID,
-		UserID:           req.UserID,
-		DepositMethodID:  req.DepositMethodID,
-		Items:            calculatedItems, // Kirim item dgn xpoin & wasteDetailID
-		TotalWeight:      totalWeight,
-		TotalXpoin:       totalXpoin,
-		Notes:            sql.NullString{String: req.Notes, Valid: req.Notes != ""},
-		PhotoURL:         photoURLDB,
-		TransactionTime:  transactionTime,
+		PartnerID:       partnerID,
+		UserID:          req.UserID,
+		DepositMethodID: req.DepositMethodID,
+		Items:           calculatedItems, // Kirim item dgn xpoin & wasteDetailID
+		TotalWeight:     totalWeight,
+		TotalXpoin:      totalXpoin,
+		Notes:           sql.NullString{String: req.Notes, Valid: req.Notes != ""},
+		PhotoURL:        photoURLDB,
+		TransactionTime: transactionTime,
 	}
 
 	// 8. Eksekusi Transaksi Database Utama (Partner side)
 	depositHeaderID, err := s.repo.ExecuteDepositCreationTransaction(depositArgs)
-	if err != nil { return nil, err } // Error transaksi utama (termasuk xpoin partner tdk cukup)
-
+	if err != nil {
+		return nil, err
+	} // Error transaksi utama (termasuk xpoin partner tdk cukup)
 
 	// 9. Update Data User (Idealnya dalam transaksi yg sama)
 	// Pastikan wallet & stats user ada
-	 _, errWU := s.userRepo.FindOrCreateWalletByUserID(req.UserID); if errWU != nil { log.Printf("Failed FindOrCreate User Wallet: %v", errWU); /* Lanjutkan? */ }
-	 _, errSU := s.userRepo.FindOrCreateStatisticsByUserID(req.UserID); if errSU != nil { log.Printf("Failed FindOrCreate User Stats: %v", errSU); /* Lanjutkan? */ }
+	_, errWU := s.userRepo.FindOrCreateWalletByUserID(req.UserID)
+	if errWU != nil {
+		log.Printf("Failed FindOrCreate User Wallet: %v", errWU) /* Lanjutkan? */
+	}
+	_, errSU := s.userRepo.FindOrCreateStatisticsByUserID(req.UserID)
+	if errSU != nil {
+		log.Printf("Failed FindOrCreate User Stats: %v", errSU) /* Lanjutkan? */
+	}
 
 	// Panggil AddDepositHistory dan TANGKAP ID nya
-    userDepositHistoryID, err := s.userRepo.AddDepositHistory(req.UserID, partnerID, depositArgs.TotalXpoin, transactionTime)
+	userDepositHistoryID, err := s.userRepo.AddDepositHistory(req.UserID, partnerID, depositArgs.TotalXpoin, transactionTime)
 	if err != nil {
-        log.Printf("CRITICAL: Failed AddUserDepositHistory after partner tx commit: %v. Data potentially inconsistent.", err)
-        // Harusnya ada mekanisme rollback manual atau notifikasi error
-        return nil, err // Atau return error parsial?
-    }
+		log.Printf("CRITICAL: Failed AddUserDepositHistory after partner tx commit: %v. Data potentially inconsistent.", err)
+		// Harusnya ada mekanisme rollback manual atau notifikasi error
+		return nil, err // Atau return error parsial?
+	}
 
 	err = s.userRepo.UpdateUserWalletOnDeposit(req.UserID, totalXpoin)
-	if err != nil { log.Printf("Failed UpdateUserWalletOnDeposit: %v", err); /* Rollback manual? */ }
+	if err != nil {
+		log.Printf("Failed UpdateUserWalletOnDeposit: %v", err) /* Rollback manual? */
+	}
 
 	err = s.userRepo.UpdateUserStatisticsOnDeposit(req.UserID, totalWeight, totalEnergySaved, totalCo2Saved, totalWaterSaved, treesSavedInt)
-	if err != nil { log.Printf("Failed UpdateUserStatisticsOnDeposit: %v", err); /* Rollback manual? */ }
+	if err != nil {
+		log.Printf("Failed UpdateUserStatisticsOnDeposit: %v", err) /* Rollback manual? */
+	}
 
 	err = s.repo.UpdateUserDepositHistoryIDReference(depositHeaderID, userDepositHistoryID)
-    if err != nil {
-        log.Printf("Warning: Failed to update user_deposit_history_id reference for partner deposit %d: %v", depositHeaderID, err)
-    }
+	if err != nil {
+		log.Printf("Warning: Failed to update user_deposit_history_id reference for partner deposit %d: %v", depositHeaderID, err)
+	}
 
 	// Kirim notifikasi ke USER bahwa deposit berhasil
-    go func() {
-        notifTitle := "Deposit Berhasil!"
-        notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari setoran sampah.", depositArgs.TotalXpoin)
-        s.notifService.SendNotification(req.UserID, notifTitle, notifBody, "DEPOSIT_SUCCESS")
-    }()
+	go func() {
+		notifTitle := "Deposit Berhasil!"
+		notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari setoran sampah.", depositArgs.TotalXpoin)
+		s.notifService.SendNotification(req.UserID, notifTitle, notifBody, "DEPOSIT_SUCCESS")
+	}()
 
 	// 10. Kembalikan data header deposit yang baru dibuat
 	// (Untuk sementara kembalikan ID saja, atau bisa buat fungsi GetDepositHeaderByID di repo)

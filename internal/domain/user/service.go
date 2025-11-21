@@ -2,26 +2,27 @@
 package user
 
 import (
-	"errors"
-	"log"
-	"strconv"
-	"database/sql"
-	"sort"
-	"fmt"
-	"math"
-	"time"
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math"
 	"mime/multipart"
-
-	"github.com/cloudinary/cloudinary-go/v2"
-	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"xetor.id/backend/internal/temporary_token"
-	"xetor.id/backend/internal/config"
 	"google.golang.org/api/idtoken"
 	"xetor.id/backend/internal/auth"
+	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/notification"
+	"xetor.id/backend/internal/temporary_token"
 )
 
 const (
@@ -62,7 +63,14 @@ type Repository interface {
 	// Withdraw methods
 	GetCurrentBalanceByUserID(userID int) (float64, error)
 	ExecuteWithdrawTransaction(userID int, amountToDeduct float64, fee float64, paymentMethodID int, accountNumber string) (string, error)
+	GetPaymentMethodByID(id int) (*PaymentMethod, error)
 
+	// Payment methods
+	GetAllActivePaymentMethods() ([]PaymentMethod, error)
+	
+	// Promotion banners
+	GetAllActivePromotionBanners() ([]PromotionBanner, error)
+	
 	// Topup methods
 	ExecuteTopupTransaction(userID int, amountToAdd float64, paymentMethodID int) (string, error)
 
@@ -296,6 +304,26 @@ func (s *Service) DeleteAccount(userIDStr string) error {
     return nil // Sukses
 }
 
+// --- Payment Methods Service Method ---
+
+// GetAllActivePaymentMethods mengambil semua payment methods yang aktif
+func (s *Service) GetAllActivePaymentMethods() ([]PaymentMethod, error) {
+	methods, err := s.repo.GetAllActivePaymentMethods()
+	if err != nil {
+		return nil, errors.New("gagal mengambil metode pembayaran")
+	}
+	return methods, nil
+}
+
+// GetAllActivePromotionBanners mengambil semua promotion banners yang aktif
+func (s *Service) GetAllActivePromotionBanners() ([]PromotionBanner, error) {
+	banners, err := s.repo.GetAllActivePromotionBanners()
+	if err != nil {
+		return nil, errors.New("gagal mengambil banner promosi")
+	}
+	return banners, nil
+}
+
 // --- User Wallet Service Method ---
 
 // GetUserWallet mengambil data wallet user (membuat jika belum ada)
@@ -342,7 +370,20 @@ func (s *Service) RequestWithdrawal(userIDStr string, req WithdrawRequest) (stri
 	if req.Amount < minWithdrawalAmount {
 		return "", fmt.Errorf("minimal penarikan adalah Rp %.0f", minWithdrawalAmount)
 	}
-	// TODO: Validasi Payment Method ID (cek apakah ID ada di tabel payment_methods)
+	
+	// Validasi Payment Method ID
+	paymentMethod, err := s.repo.GetPaymentMethodByID(req.PaymentMethodID)
+	if err != nil {
+		log.Printf("Error getting payment method ID %d: %v", req.PaymentMethodID, err)
+		return "", errors.New("gagal memvalidasi metode pembayaran")
+	}
+	if paymentMethod == nil {
+		return "", errors.New("metode pembayaran tidak valid")
+	}
+	if paymentMethod.Status != "Active" {
+		return "", errors.New("metode pembayaran tidak aktif")
+	}
+	
 	// TODO: Validasi Account Number (mungkin cek format dasar)
 
 	// 2. Hitung Total dan Cek Saldo
@@ -589,30 +630,55 @@ func (s *Service) UpdateProfile(userIDStr string, req UpdateUserProfileRequest) 
 	return nil
 }
 
-// UploadProfilePhoto menghandle upload file ke Cloudinary dan update DB user
+// UploadProfilePhoto menghandle upload file ke storage lokal (VPS) dan update DB user
 func (s *Service) UploadProfilePhoto(userIDStr string, fileHeader *multipart.FileHeader) (string, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil { return "", errors.New("ID pengguna tidak valid") }
-
-	file, err := fileHeader.Open(); if err != nil { /*...*/ }
-	defer file.Close()
-
-	cldURL := config.GetCloudinaryURL();
-	cld, err := cloudinary.NewFromURL(cldURL); if err != nil { /*...*/ }
-
-	uploadParams := uploader.UploadParams{
-		Folder:         "xetor/users", // Simpan di folder xetor/users
-		PublicID:       fmt.Sprintf("profile_%d", userID),
-		Overwrite:      func() *bool { b := true; return &b }(), // Pointer ke true
-		Format:         "jpg",
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		return "", errors.New("ID pengguna tidak valid")
 	}
 
-	ctx := context.Background();
-	uploadResult, err := cld.Upload.Upload(ctx, file, uploadParams); if err != nil { /*...*/ }
+	file, err := fileHeader.Open()
+	if err != nil {
+		log.Printf("Error opening uploaded user photo file: %v", err)
+		return "", errors.New("gagal membaca file foto")
+	}
+	defer file.Close()
 
-	photoURL := uploadResult.SecureURL
+	// Tentukan direktori dan nama file di storage lokal
+	basePath := config.GetMediaBasePath()
+	userDir := filepath.Join(basePath, "profile", "users")
+	if err := os.MkdirAll(userDir, 0755); err != nil {
+		log.Printf("Error creating user profile photo directory: %v", err)
+		return "", errors.New("gagal menyiapkan penyimpanan foto")
+	}
+
+	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	if ext == "" {
+		ext = ".jpg"
+	}
+	filename := fmt.Sprintf("%d%s", userID, ext)
+	fullPath := filepath.Join(userDir, filename)
+
+	dst, err := os.Create(fullPath)
+	if err != nil {
+		log.Printf("Error creating destination file for user %d photo: %v", userID, err)
+		return "", errors.New("gagal menyimpan file foto")
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Error copying uploaded photo to destination for user %d: %v", userID, err)
+		return "", errors.New("gagal menyimpan file foto")
+	}
+
+	// Bangun URL publik berbasis CDN
+	cdnBase := config.GetCDNBaseURL()
+	photoURL := fmt.Sprintf("%s/profile/users/%s", cdnBase, filename)
+
+	// Update URL di database
 	err = s.repo.UpdateUserPhotoURL(userID, photoURL) // Panggil repo user
 	if err != nil {
-		log.Printf("DB update failed after Cloudinary upload for user %d: %v", userID, err)
+		log.Printf("DB update failed after saving user photo for user %d: %v", userID, err)
 		return "", err
 	}
 

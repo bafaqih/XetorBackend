@@ -2,9 +2,10 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
-	"fmt"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -46,6 +47,28 @@ func GetCloudinaryURL() string {
 		log.Fatal("Cloudinary credentials (API_KEY, API_SECRET, CLOUD_NAME) must be set in .env file")
 	}
 	return fmt.Sprintf("cloudinary://%s:%s@%s", apiKey, apiSecret, cloudName)
+}
+
+// GetMediaBasePath mengembalikan direktori dasar untuk menyimpan file media (gambar, dll).
+// Di VPS sebaiknya di-set, misal: MEDIA_BASE_PATH=/var/www/xetor/images
+// Untuk development lokal, default ke "./media" jika tidak di-set.
+func GetMediaBasePath() string {
+	basePath := os.Getenv("MEDIA_BASE_PATH")
+	if basePath == "" {
+		basePath = "./media"
+	}
+	return basePath
+}
+
+// GetCDNBaseURL mengembalikan base URL untuk mengakses file media melalui CDN / domain statis.
+// Contoh di VPS: CDN_BASE_URL=https://cdn.xetor.bafagih.my.id
+func GetCDNBaseURL() string {
+	baseURL := os.Getenv("CDN_BASE_URL")
+	if baseURL == "" {
+		log.Fatal("CDN_BASE_URL must be set in .env file")
+	}
+	// Pastikan tidak ada trailing slash agar mudah di-join
+	return strings.TrimRight(baseURL, "/")
 }
 
 // GetGoogleClientID mengambil nilai GOOGLE_CLIENT_ID dari environment
