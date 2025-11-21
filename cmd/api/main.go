@@ -45,7 +45,8 @@ func main() {
 	midtransHandler := midtrans.NewMidtransHandler(midtransService)
 
 	router := server.NewRouter(userHandler, adminHandler, midtransHandler, partnerHandler)
-	err := router.Run(":8080")
+	// Gunakan port 8081 untuk Xetor agar tidak bentrok dengan web portofolio di 8080
+	err := router.Run(":8081")
 	if err != nil {
 		log.Fatal("Failed to start server:", err)
 	}

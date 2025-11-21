@@ -604,6 +604,69 @@ func (r *UserRepository) ExecuteWithdrawTransaction(userID int, amountToDeduct f
 	return orderID, nil
 }
 
+// GetPaymentMethodByID mengambil payment method berdasarkan ID untuk validasi
+func (r *UserRepository) GetPaymentMethodByID(id int) (*user.PaymentMethod, error) {
+	query := `SELECT id, name, type, status FROM payment_methods WHERE id = $1`
+	var pm user.PaymentMethod
+	err := r.db.QueryRow(query, id).Scan(&pm.ID, &pm.Name, &pm.Type, &pm.Status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Payment method tidak ditemukan
+		}
+		log.Printf("Error getting payment method by ID %d: %v", id, err)
+		return nil, err
+	}
+	return &pm, nil
+}
+
+// GetAllActivePaymentMethods mengambil semua payment methods yang aktif
+func (r *UserRepository) GetAllActivePaymentMethods() ([]user.PaymentMethod, error) {
+	query := `SELECT id, name, type, status FROM payment_methods WHERE status = 'Active' ORDER BY name ASC`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		log.Printf("Error getting active payment methods: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var methods []user.PaymentMethod
+	for rows.Next() {
+		var pm user.PaymentMethod
+		if err := rows.Scan(&pm.ID, &pm.Name, &pm.Type, &pm.Status); err != nil {
+			log.Printf("Error scanning payment method row: %v", err)
+			return nil, err
+		}
+		methods = append(methods, pm)
+	}
+	return methods, nil
+}
+
+// GetAllActivePromotionBanners mengambil semua promotion banners yang aktif
+func (r *UserRepository) GetAllActivePromotionBanners() ([]user.PromotionBanner, error) {
+	query := `SELECT id, name, image, link, status, created_at, updated_at FROM promotion_banners WHERE status = 'Active' ORDER BY created_at DESC`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		log.Printf("Error getting active promotion banners: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var banners []user.PromotionBanner
+	for rows.Next() {
+		var pb user.PromotionBanner
+		var link sql.NullString
+		if err := rows.Scan(&pb.ID, &pb.Name, &pb.Image, &link, &pb.Status, &pb.CreatedAt, &pb.UpdatedAt); err != nil {
+			log.Printf("Error scanning promotion banner row: %v", err)
+			return nil, err
+		}
+		if link.Valid {
+			pb.Link = link.String
+		}
+		banners = append(banners, pb)
+	}
+	return banners, nil
+}
+
 // --- Top Up Process Functions ---
 
 // ExecuteTopupTransaction menjalankan penambahan saldo dan pencatatan riwayat top up dalam satu transaksi DB
