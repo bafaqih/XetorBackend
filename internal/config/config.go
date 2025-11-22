@@ -2,7 +2,6 @@
 package config
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -29,24 +28,11 @@ func GetJWTSecret() []byte {
 
 // GetMidtransServerKey mengambil nilai MIDTRANS_SERVER_KEY dari environment
 func GetMidtransServerKey() string {
-    key := os.Getenv("MIDTRANS_SERVER_KEY")
-    if key == "" {
-        log.Fatal("MIDTRANS_SERVER_KEY must be set in .env file")
-    }
-    return key
-}
-
-// GetCloudinaryURL mengambil URL Cloudinary dari environment
-func GetCloudinaryURL() string {
-	// Format: cloudinary://<api_key>:<api_secret>@<cloud_name>
-	apiKey := os.Getenv("CLOUDINARY_API_KEY")
-	apiSecret := os.Getenv("CLOUDINARY_API_SECRET")
-	cloudName := os.Getenv("CLOUDINARY_CLOUD_NAME")
-
-	if apiKey == "" || apiSecret == "" || cloudName == "" {
-		log.Fatal("Cloudinary credentials (API_KEY, API_SECRET, CLOUD_NAME) must be set in .env file")
+	key := os.Getenv("MIDTRANS_SERVER_KEY")
+	if key == "" {
+		log.Fatal("MIDTRANS_SERVER_KEY must be set in .env file")
 	}
-	return fmt.Sprintf("cloudinary://%s:%s@%s", apiKey, apiSecret, cloudName)
+	return key
 }
 
 // GetMediaBasePath mengembalikan direktori dasar untuk menyimpan file media (gambar, dll).
@@ -69,6 +55,19 @@ func GetCDNBaseURL() string {
 	}
 	// Pastikan tidak ada trailing slash agar mudah di-join
 	return strings.TrimRight(baseURL, "/")
+}
+
+// GetDefaultPhotoURL mengembalikan URL foto profil default.
+// Contoh di VPS: DEFAULT_PHOTO_URL=https://cdn.xetor.bafagih.my.id/profile/default.jpg
+// Jika tidak di-set, akan menggunakan fallback CDN URL.
+func GetDefaultPhotoURL() string {
+	defaultPhotoURL := os.Getenv("DEFAULT_PHOTO_URL")
+	if defaultPhotoURL == "" {
+		// Fallback jika tidak ada di .env (sebaiknya selalu ada) - gunakan CDN VPS
+		defaultPhotoURL = "https://cdn.xetor.bafagih.my.id/profile/default.jpg"
+		log.Println("WARNING: DEFAULT_PHOTO_URL not set in .env, using fallback CDN URL.")
+	}
+	return defaultPhotoURL
 }
 
 // GetGoogleClientID mengambil nilai GOOGLE_CLIENT_ID dari environment

@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	
 	"golang.org/x/crypto/bcrypt"
+	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/domain/partner"
 )
 
@@ -45,12 +45,9 @@ func (r *PartnerRepository) SavePartner(p *partner.Partner) error {
 		return errors.New("gagal hashing password")
 	}
 
-	// 2. Ambil URL foto default
-	defaultPhotoURL := os.Getenv("DEFAULT_PHOTO_URL")
-	var photo sql.NullString
-	if defaultPhotoURL != "" {
-		photo = sql.NullString{String: defaultPhotoURL, Valid: true}
-	}
+	// 2. Ambil URL foto default dari config helper function
+	defaultPhotoURL := config.GetDefaultPhotoURL()
+	photo := sql.NullString{String: defaultPhotoURL, Valid: true}
 
 	// 3. Insert ke tabel partners
 	queryPartners := `

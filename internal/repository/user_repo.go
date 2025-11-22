@@ -4,7 +4,6 @@ package repository
 import (
 	"database/sql"
 	"log"
-	"os"
 	"fmt"
 	"strings"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/domain/user"
 )
 
@@ -32,13 +32,8 @@ func (r *UserRepository) Save(u *user.User) error {
 		return err
 	}
 
-	// Ambil URL default dari environment variable (lebih baik dari hardcode)
-	defaultPhotoURL := os.Getenv("DEFAULT_PHOTO_URL")
-	if defaultPhotoURL == "" {
-		// Fallback jika tidak ada di .env (sebaiknya selalu ada)
-		defaultPhotoURL = "https://res.cloudinary.com/db6vyj3n9/image/upload/v1761057514/onzkl78dvit7fyiqiphx.jpg"
-		log.Println("WARNING: DEFAULT_PHOTO_URL not set in .env, using fallback.")
-	}
+	// Ambil URL default dari config helper function
+	defaultPhotoURL := config.GetDefaultPhotoURL()
 
 	// --- PERUBAHAN DI SINI ---
 	// Tambahkan kolom 'photo' dan $5 ke query
