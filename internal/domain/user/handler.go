@@ -594,7 +594,7 @@ func (h *Handler) UploadProfilePhoto(c *gin.Context) {
 		errMsg := err.Error()
 		if errMsg == "pengguna tidak ditemukan" {
 			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
-		} else { // Error lain (baca file, cloudinary, db update)
+		} else { // Error lain (baca file, penyimpanan, db update)
 			// Log error internal server
 			log.Printf("Internal error uploading user photo %s: %v", userIDStr.(string), err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengunggah foto profil"})

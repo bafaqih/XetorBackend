@@ -1,10 +1,10 @@
 package partner
 
 import (
-	"net/http"
-	"strings"
 	"log"
+	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -106,11 +106,12 @@ func (h *PartnerHandler) UpdateProfile(c *gin.Context) {
 	err := h.service.UpdateProfile(partnerIDStr.(string), req)
 	if err != nil {
 		errMsg := err.Error()
-        if errMsg == "partner tidak ditemukan" {
-             c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
-        } else if errMsg == "tidak ada data untuk diupdate" || errMsg == "nomor telepon sudah digunakan" {
-             c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-        } else {
+		switch errMsg {
+		case "partner tidak ditemukan":
+			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
+		case "tidak ada data untuk diupdate", "nomor telepon sudah digunakan":
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengupdate profil"})
 		}
 		return
@@ -143,14 +144,14 @@ func (h *PartnerHandler) UploadProfilePhoto(c *gin.Context) {
 		errMsg := err.Error()
 		if errMsg == "partner tidak ditemukan" {
 			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
-		} else { // Error lain (baca file, cloudinary, db update)
+		} else { // Error lain (baca file, penyimpanan, db update)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengunggah foto profil"})
 		}
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Foto profil berhasil diunggah",
+		"message":   "Foto profil berhasil diunggah",
 		"photo_url": newPhotoURL,
 	})
 }
@@ -172,13 +173,14 @@ func (h *PartnerHandler) ChangePassword(c *gin.Context) {
 	err := h.service.ChangePassword(partnerIDStr.(string), req)
 	if err != nil {
 		errMsg := err.Error()
-		if errMsg == "konfirmasi password baru tidak cocok" ||
-		   errMsg == "password baru minimal 6 karakter" ||
-		   errMsg == "password lama salah" {
+		switch errMsg {
+		case "konfirmasi password baru tidak cocok",
+			"password baru minimal 6 karakter",
+			"password lama salah":
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-		} else if errMsg == "partner tidak ditemukan" || errMsg == "partner tidak ditemukan saat update" {
+		case "partner tidak ditemukan", "partner tidak ditemukan saat update":
 			c.JSON(http.StatusNotFound, gin.H{"error": "Partner tidak ditemukan"})
-		} else {
+		default:
 			log.Printf("Internal error changing partner password %s: %v", partnerIDStr.(string), err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengubah password"})
 		}
@@ -187,7 +189,6 @@ func (h *PartnerHandler) ChangePassword(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password berhasil diubah"})
 }
-
 
 // --- Partner Address Handlers ---
 
@@ -350,16 +351,20 @@ func (h *PartnerHandler) GetAllWastePrices(c *gin.Context) {
 
 func (h *PartnerHandler) GetWastePriceByID(c *gin.Context) {
 	partnerIDStr, _ := c.Get("entityID")
-	detailID, err := strconv.Atoi(c.Param("detail_id")); if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID detail tidak valid"}); return
+	detailID, err := strconv.Atoi(c.Param("detail_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID detail tidak valid"})
+		return
 	}
 
 	detail, err := h.service.GetWastePriceByID(detailID, partnerIDStr.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	if detail == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Detail harga sampah tidak ditemukan atau bukan milik Anda"}); return
+		c.JSON(http.StatusNotFound, gin.H{"error": "Detail harga sampah tidak ditemukan atau bukan milik Anda"})
+		return
 	}
 	c.JSON(http.StatusOK, detail)
 }
@@ -381,11 +386,11 @@ func (h *PartnerHandler) UpdateWastePrice(c *gin.Context) {
 
 	// Cek apakah ada data yang dikirim (selain file gambar)
 	if req.Name == "" && req.Price <= 0 && req.Unit == "" {
-		 imageFile, _ := c.FormFile("image")
-		 if imageFile == nil { // Jika gambar juga tidak ada, baru error
+		imageFile, _ := c.FormFile("image")
+		if imageFile == nil { // Jika gambar juga tidak ada, baru error
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data untuk diupdate"})
 			return
-		 }
+		}
 	}
 
 	wasteDetailIDStr := c.PostForm("waste_detail_id")
@@ -410,7 +415,7 @@ func (h *PartnerHandler) UpdateWastePrice(c *gin.Context) {
 	if err != nil {
 		errMsg := err.Error()
 		if errMsg == "detail harga sampah tidak ditemukan atau bukan milik Anda" {
-			 c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
+			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengupdate detail harga sampah: " + errMsg})
 		}
@@ -421,15 +426,17 @@ func (h *PartnerHandler) UpdateWastePrice(c *gin.Context) {
 
 func (h *PartnerHandler) DeleteWastePrice(c *gin.Context) {
 	partnerIDStr, _ := c.Get("entityID")
-	detailID, err := strconv.Atoi(c.Param("detail_id")); if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID detail tidak valid"}); return
+	detailID, err := strconv.Atoi(c.Param("detail_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID detail tidak valid"})
+		return
 	}
 
 	err = h.service.DeleteWastePrice(detailID, partnerIDStr.(string))
 	if err != nil {
 		errMsg := err.Error()
 		if errMsg == "detail harga sampah tidak ditemukan atau bukan milik Anda" {
-			 c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
+			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus detail harga sampah: " + errMsg})
 		}
@@ -516,11 +523,10 @@ func (h *PartnerHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
-
 	err := h.service.DeleteAccount(partnerIDStrConv)
 	if err != nil {
 		if err.Error() == "partner tidak ditemukan" {
-			 c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		} else {
 			log.Printf("Internal error deleting partner account %s: %v", partnerIDStrConv, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus akun"})
@@ -688,7 +694,6 @@ func (h *PartnerHandler) TransferXpoin(c *gin.Context) {
 		return // Hentikan eksekusi
 	}
 
-
 	var req PartnerTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -700,9 +705,9 @@ func (h *PartnerHandler) TransferXpoin(c *gin.Context) {
 		errMsg := err.Error()
 		// Tangani error spesifik dari service/repo
 		if strings.Contains(errMsg, "tidak mencukupi") ||
-		   strings.Contains(errMsg, "tidak ditemukan") ||
-		   strings.Contains(errMsg, "diri sendiri") ||
-		   strings.Contains(errMsg, "harus positif") {
+			strings.Contains(errMsg, "tidak ditemukan") ||
+			strings.Contains(errMsg, "diri sendiri") ||
+			strings.Contains(errMsg, "harus positif") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		} else {
 			log.Printf("Internal error partner transfer %s: %v", partnerIDStrConv, err)
@@ -737,21 +742,24 @@ func (h *PartnerHandler) ConvertXpToRp(c *gin.Context) {
 
 	var req PartnerConversionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	updatedWallet, err := h.service.ConvertXpToRp(partnerIDStrConv, req)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "angka bulat") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
 		log.Printf("Internal error partner ConvertXpToRp %s: %v", partnerIDStrConv, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Konversi Xpoin ke Rupiah berhasil",
-		"wallet": updatedWallet,
+		"wallet":  updatedWallet,
 	})
 }
 
@@ -773,21 +781,24 @@ func (h *PartnerHandler) ConvertRpToXp(c *gin.Context) {
 
 	var req PartnerConversionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	updatedWallet, err := h.service.ConvertRpToXp(partnerIDStrConv, req)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "mencukupi") || strings.Contains(errMsg, "terlalu kecil") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg}); return
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
 		log.Printf("Internal error partner ConvertRpToXp %s: %v", partnerIDStrConv, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"}); return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal melakukan konversi"})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Konversi Rupiah ke Xpoin berhasil",
-		"wallet": updatedWallet,
+		"wallet":  updatedWallet,
 	})
 }
 
@@ -898,8 +909,8 @@ func (h *PartnerHandler) CreateDeposit(c *gin.Context) {
 
 	// Validasi ItemsJSON tidak boleh kosong
 	if req.ItemsJSON == "" {
-		 c.JSON(http.StatusBadRequest, gin.H{"error": "items_json tidak boleh kosong"})
-		 return
+		c.JSON(http.StatusBadRequest, gin.H{"error": "items_json tidak boleh kosong"})
+		return
 	}
 
 	// 4. Ambil file foto (opsional)
@@ -912,8 +923,8 @@ func (h *PartnerHandler) CreateDeposit(c *gin.Context) {
 		log.Printf("Error CreateDeposit handler: %v", err) // Log detail error
 		// Bedakan error validasi (400) vs internal (500)
 		if strings.Contains(errMsg, "tidak valid") || strings.Contains(errMsg, "harus positif") ||
-		   strings.Contains(errMsg, "tidak mencukupi") || strings.Contains(errMsg, "tidak ditemukan") ||
-		   strings.Contains(errMsg, "minimal harus ada") {
+			strings.Contains(errMsg, "tidak mencukupi") || strings.Contains(errMsg, "tidak ditemukan") ||
+			strings.Contains(errMsg, "minimal harus ada") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses setoran sampah"})

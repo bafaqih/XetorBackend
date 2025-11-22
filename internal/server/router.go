@@ -2,10 +2,6 @@
 package server
 
 import (
-	"io"
-	"net/http"
-	"net/url"
-
 	"github.com/gin-gonic/gin"
 	"xetor.id/backend/internal/domain/admin"
 	"xetor.id/backend/internal/domain/midtrans"
@@ -39,50 +35,6 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 	{
 		publicRoutes.GET("/payment-methods", userHandler.GetActivePaymentMethods)
 		publicRoutes.GET("/promotion-banners", userHandler.GetActivePromotionBanners)
-
-		// Proxy sederhana untuk mengambil gambar dari Cloudinary melalui backend.
-		// Tujuan: menghindari masalah koneksi langsung device -> Cloudinary.
-		publicRoutes.GET("/proxy-image", func(c *gin.Context) {
-			imageURL := c.Query("url")
-			if imageURL == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "url parameter is required"})
-				return
-			}
-
-			parsed, err := url.Parse(imageURL)
-			if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
-				return
-			}
-
-			// Opsional: batasi hanya ke domain Cloudinary untuk mencegah open proxy
-			if parsed.Host != "res.cloudinary.com" && parsed.Host != "cloudinary.com" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported host"})
-				return
-			}
-
-			resp, err := http.Get(imageURL)
-			if err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch image"})
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				c.JSON(resp.StatusCode, gin.H{"error": "failed to fetch image from source"})
-				return
-			}
-
-			// Teruskan Content-Type asli (image/png, image/jpeg, dll)
-			if ct := resp.Header.Get("Content-Type"); ct != "" {
-				c.Header("Content-Type", ct)
-			} else {
-				c.Header("Content-Type", "application/octet-stream")
-			}
-
-			c.Status(http.StatusOK)
-			_, _ = io.Copy(c.Writer, resp.Body)
-		})
 	}
 
 	// Grup routing untuk user yang terotentikasi

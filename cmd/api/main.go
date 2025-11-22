@@ -2,20 +2,21 @@ package main
 
 import (
 	"log"
+
+	"xetor.id/backend/internal/config"
 	"xetor.id/backend/internal/database"
 	"xetor.id/backend/internal/domain/admin"
+	"xetor.id/backend/internal/domain/midtrans"
+	"xetor.id/backend/internal/domain/partner"
 	"xetor.id/backend/internal/domain/user"
+	"xetor.id/backend/internal/notification"
 	"xetor.id/backend/internal/repository"
 	"xetor.id/backend/internal/server"
-	"xetor.id/backend/internal/config"
-	"xetor.id/backend/internal/domain/midtrans"
 	"xetor.id/backend/internal/temporary_token"
-	"xetor.id/backend/internal/domain/partner"
-	"xetor.id/backend/internal/notification"
 )
 
 func main() {
-	config.LoadConfig() 
+	config.LoadConfig()
 	database.ConnectDB()
 	db := database.DB
 
@@ -23,7 +24,7 @@ func main() {
 	tokenStore := temporary_token.NewTokenStore()
 
 	// Inisialisasi NotificationService
-    notifService := notification.NewNotificationService()
+	notifService := notification.NewNotificationService()
 
 	// Komponen Admin
 	adminRepo := repository.NewAdminRepository(db)
