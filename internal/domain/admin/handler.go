@@ -407,13 +407,68 @@ func (h *AdminHandler) UpdatePromotionBanner(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id")); if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID tidak valid"}); return
 	}
-	var req UpdatePromotionBannerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+
+	// Ambil data dari form (multipart/form-data)
+	name := c.PostForm("name")
+	link := c.PostForm("link")
+	status := c.PostForm("status")
+	
+	// Cek apakah ada file image yang diupload
+	fileHeader, err := c.FormFile("image")
+	var imageURL string
+	
+	if err == nil && fileHeader != nil {
+		// Ada file yang diupload, simpan file baru
+		basePath := config.GetMediaBasePath()
+		bannerDir := filepath.Join(basePath, "banners")
+		if err := os.MkdirAll(bannerDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan penyimpanan banner"})
+			return
+		}
+
+		src, err := fileHeader.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca file banner"})
+			return
+		}
+		defer src.Close()
+
+		ext := filepath.Ext(fileHeader.Filename)
+		if ext == "" {
+			ext = ".jpg"
+		}
+		filename := fmt.Sprintf("banner_%d_%d%s", id, fileHeader.Size, ext)
+		fullPath := filepath.Join(bannerDir, filename)
+
+		dst, err := os.Create(fullPath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file banner"})
+			return
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, src); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file banner"})
+			return
+		}
+
+		cdnBase := config.GetCDNBaseURL()
+		imageURL = fmt.Sprintf("%s/banners/%s", cdnBase, filename)
+	} else {
+		// Tidak ada file upload, ambil dari form field "image" jika ada (untuk update URL langsung)
+		imageURL = c.PostForm("image")
 	}
+
 	// Cek jika body kosong
-	if req.Name == "" && req.Image == "" && req.Link == "" && req.Status == "" {
-		 c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data untuk diupdate"}); return
+	if name == "" && imageURL == "" && link == "" && status == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tidak ada data untuk diupdate"}); return
+	}
+
+	req := UpdatePromotionBannerRequest{
+		Name:   name,
+		Image:  imageURL,
+		Link:   link,
+		Status: status,
 	}
 
 	err = h.service.UpdatePromotionBanner(id, req); if err != nil {
