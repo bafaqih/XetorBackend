@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings" // Untuk memisahkan order_id
 
 	"github.com/midtrans/midtrans-go"
@@ -18,7 +19,7 @@ import (
 // Definisikan interface agar service bergantung pada abstraksi, bukan implementasi
 type TransactionRepository interface {
 	UpdateWithdrawStatus(orderID string, newStatus string, transactionID string) error
-	UpdateTopupStatus(orderID string, newStatus string, transactionID string) error
+	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error
 }
 
 type MidtransService struct {
@@ -86,7 +87,16 @@ func (s *MidtransService) ProcessNotification(notification MidtransTransactionNo
 		updateErr = s.repo.UpdateWithdrawStatus(notification.OrderID, finalStatus, notification.TransactionID)
 	case "TP": // Top Up
 		log.Printf("Attempting to update topup status for Order ID: %s to %s", notification.OrderID, finalStatus)
-		updateErr = s.repo.UpdateTopupStatus(notification.OrderID, finalStatus, notification.TransactionID)
+		// Parse amount dari gross_amount (string format: "50000.00")
+		amount, err := strconv.ParseFloat(notification.GrossAmount, 64)
+		if err != nil {
+			log.Printf("Error parsing gross_amount from notification: %v", err)
+			amount = 0.0 // Default jika parsing gagal
+		}
+		// Payment method ID default ke 1 (Gopay) karena Android hardcode ke 1
+		// TODO: Bisa diambil dari payment_type jika perlu mapping
+		paymentMethodID := 1
+		updateErr = s.repo.UpdateTopupStatus(notification.OrderID, finalStatus, notification.TransactionID, amount, paymentMethodID)
 	default:
 		log.Printf("Unknown transaction type prefix in Order ID: %s", transactionTypePrefix)
 		updateErr = errors.New("prefix Order ID tidak dikenali")
@@ -109,13 +119,13 @@ func (s *MidtransService) CreateSnapTransaction(req interface{}) (interface{}, e
 		// Gunakan method adapter
 		return s.CreateSnapTransactionFromMap(reqMap)
 	}
-	
+
 	// Jika bukan map, coba convert ke SnapTransactionRequest
 	snapReq, ok := req.(SnapTransactionRequest)
 	if !ok {
 		return nil, errors.New("invalid request type for CreateSnapTransaction")
 	}
-	
+
 	return s.createSnapTransactionInternal(snapReq)
 }
 
@@ -123,14 +133,14 @@ func (s *MidtransService) CreateSnapTransaction(req interface{}) (interface{}, e
 func (s *MidtransService) createSnapTransactionInternal(req SnapTransactionRequest) (*SnapTransactionResponse, error) {
 	// Setup Midtrans client
 	serverKey := config.GetMidtransServerKey()
-	
+
 	// Tentukan environment (sandbox atau production)
 	// Untuk sekarang kita pakai sandbox, bisa diubah via env variable nanti
 	env := midtrans.Sandbox
 	if os.Getenv("MIDTRANS_ENV") == "production" {
 		env = midtrans.Production
 	}
-	
+
 	snapClient := snap.Client{}
 	snapClient.New(serverKey, env)
 
@@ -215,7 +225,7 @@ func (s *MidtransService) validateSignature(notification MidtransTransactionNoti
 	serverKey := config.GetMidtransServerKey() // Ambil Server Key dari .env
 	// String yang di-hash: order_id + status_code + gross_amount + ServerKey
 	input := notification.OrderID + notification.StatusCode + notification.GrossAmount + serverKey
-	
+
 	// Hash menggunakan SHA512
 	hasher := sha512.New()
 	hasher.Write([]byte(input))

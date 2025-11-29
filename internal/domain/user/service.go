@@ -3,7 +3,9 @@ package user
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -462,10 +464,11 @@ func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (*TopupRespon
 		return nil, errors.New("pengguna tidak ditemukan")
 	}
 
-	// 4. Catat riwayat top up dengan status Pending (TIDAK tambah saldo dulu)
-	orderID, err := s.repo.CreateTopupTransaction(userID, req.Amount, req.PaymentMethodID)
+	// 4. Generate order_id tanpa create record di DB
+	// Record akan dibuat saat webhook pending pertama kali (setelah user pilih payment method)
+	orderID, err := s.generateTopupOrderID(userID, req.Amount)
 	if err != nil {
-		return nil, fmt.Errorf("gagal mencatat riwayat top up: %w", err)
+		return nil, fmt.Errorf("gagal membuat order ID: %w", err)
 	}
 
 	// 5. Buat Snap transaction di Midtrans menggunakan interface
@@ -494,11 +497,31 @@ func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (*TopupRespon
 	}
 
 	log.Printf("Topup request created successfully. Order ID: %s, Snap Token: %s", orderID, token)
+	log.Printf("Note: DB record will be created when user selects payment method (webhook pending)")
 
 	// Jangan kirim notifikasi dulu, tunggu webhook konfirmasi pembayaran berhasil
 	// Notifikasi akan dikirim setelah webhook mengkonfirmasi status Completed
 
 	return response, nil
+}
+
+// generateTopupOrderID membuat order ID unik untuk topup tanpa create DB record
+// Format: TP-{userID}-{timestamp}-{random}
+// Record akan dibuat saat webhook pending pertama kali
+func (s *Service) generateTopupOrderID(userID int, amount float64) (string, error) {
+	// Generate random string untuk uniqueness
+	randomBytes := make([]byte, 4)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", fmt.Errorf("gagal generate random: %w", err)
+	}
+	randomStr := hex.EncodeToString(randomBytes)
+	
+	// Format: TP-{userID}-{timestamp}-{random}
+	// Timestamp dalam format Unix (10 digit)
+	timestamp := time.Now().Unix()
+	orderID := fmt.Sprintf("TP-%d-%d-%s", userID, timestamp, randomStr)
+	
+	return orderID, nil
 }
 
 // --- User Transfer Service Method ---
