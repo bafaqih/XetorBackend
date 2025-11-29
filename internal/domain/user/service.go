@@ -79,7 +79,7 @@ type Repository interface {
 
 	// Topup methods
 	CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error)
-	GenerateTopupOrderID() (string, error) // Generate orderID tanpa create record
+	CreateTopupTransactionInitialized(userID int, amount float64, paymentMethodID int) (string, error) // Create dengan status "Initialized"
 	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error
 
 	// Transfer methods
@@ -481,11 +481,12 @@ func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (*TopupRespon
 		return nil, errors.New("pengguna tidak ditemukan")
 	}
 
-	// 4. Generate order_id menggunakan sequence tanpa create record di DB
-	// Record akan dibuat saat webhook pending pertama kali (setelah user pilih payment method)
-	orderID, err := s.repo.GenerateTopupOrderID()
+	// 4. Catat riwayat top up dengan status "Initialized" (belum masuk ke history user)
+	// Status akan diupdate ke "Pending" saat webhook pending datang (user sudah pilih payment method)
+	// Jika user cancel sebelum pilih payment method, record tetap ada tapi tidak muncul di history
+	orderID, err := s.repo.CreateTopupTransactionInitialized(userID, req.Amount, req.PaymentMethodID)
 	if err != nil {
-		return nil, fmt.Errorf("gagal membuat order ID: %w", err)
+		return nil, fmt.Errorf("gagal mencatat riwayat top up: %w", err)
 	}
 
 	// 5. Buat Snap transaction di Midtrans menggunakan interface
