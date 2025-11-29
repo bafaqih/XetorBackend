@@ -35,6 +35,15 @@ func GetMidtransServerKey() string {
 	return key
 }
 
+// GetMidtransClientKey mengambil nilai MIDTRANS_CLIENT_KEY dari environment (untuk frontend)
+func GetMidtransClientKey() string {
+	key := os.Getenv("MIDTRANS_CLIENT_KEY")
+	if key == "" {
+		log.Fatal("MIDTRANS_CLIENT_KEY must be set in .env file")
+	}
+	return key
+}
+
 // GetMediaBasePath mengembalikan direktori dasar untuk menyimpan file media (gambar, dll).
 // Di VPS sebaiknya di-set, misal: MEDIA_BASE_PATH=/var/www/xetor/images
 // Untuk development lokal, default ke "./media" jika tidak di-set.

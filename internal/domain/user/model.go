@@ -114,6 +114,13 @@ type TopupRequest struct {
 	Amount          float64 `json:"amount" binding:"required,gt=0"` // Jumlah harus lebih besar dari 0
 }
 
+// TopupResponse data untuk response top up (berisi Snap token dari Midtrans)
+type TopupResponse struct {
+	OrderID     string `json:"order_id"`     // Order ID untuk tracking
+	SnapToken   string `json:"snap_token"`   // Snap token untuk frontend
+	RedirectURL string `json:"redirect_url"` // URL redirect (alternatif)
+}
+
 // TransferRequest data untuk request transfer Xpoin
 type TransferRequest struct {
 	RecipientEmail string `json:"recipient_email" binding:"required,email"` // Validasi email

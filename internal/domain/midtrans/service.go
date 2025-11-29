@@ -7,16 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings" // Untuk memisahkan order_id
 
+	"github.com/midtrans/midtrans-go"
+	"github.com/midtrans/midtrans-go/snap"
 	"xetor.id/backend/internal/config"
 )
 
 // Definisikan interface agar service bergantung pada abstraksi, bukan implementasi
 type TransactionRepository interface {
-
 	UpdateWithdrawStatus(orderID string, newStatus string, transactionID string) error
-	// UpdateTopupStatus(orderID string, newStatus string, transactionID string) error
+	UpdateTopupStatus(orderID string, newStatus string, transactionID string) error
 }
 
 type MidtransService struct {
@@ -77,7 +79,7 @@ func (s *MidtransService) ProcessNotification(notification MidtransTransactionNo
 		updateErr = s.repo.UpdateWithdrawStatus(notification.OrderID, finalStatus, notification.TransactionID)
 	case "TP": // Top Up
 		log.Printf("Attempting to update topup status for Order ID: %s to %s", notification.OrderID, finalStatus)
-		// updateErr = s.repo.UpdateTopupStatus(notification.OrderID, finalStatus, notification.TransactionID) // Uncomment saat fungsi repo dibuat
+		updateErr = s.repo.UpdateTopupStatus(notification.OrderID, finalStatus, notification.TransactionID)
 	default:
 		log.Printf("Unknown transaction type prefix in Order ID: %s", transactionTypePrefix)
 		updateErr = errors.New("prefix Order ID tidak dikenali")
@@ -90,6 +92,115 @@ func (s *MidtransService) ProcessNotification(notification MidtransTransactionNo
 
 	log.Printf("Successfully processed notification for Order ID: %s", notification.OrderID)
 	return nil // Sukses
+}
+
+// CreateSnapTransaction adalah method adapter untuk interface (menerima interface{}, return interface{})
+func (s *MidtransService) CreateSnapTransaction(req interface{}) (interface{}, error) {
+	// Convert interface{} ke map atau SnapTransactionRequest
+	reqMap, ok := req.(map[string]interface{})
+	if ok {
+		// Gunakan method adapter
+		return s.CreateSnapTransactionFromMap(reqMap)
+	}
+	
+	// Jika bukan map, coba convert ke SnapTransactionRequest
+	snapReq, ok := req.(SnapTransactionRequest)
+	if !ok {
+		return nil, errors.New("invalid request type for CreateSnapTransaction")
+	}
+	
+	return s.createSnapTransactionInternal(snapReq)
+}
+
+// createSnapTransactionInternal adalah implementasi internal untuk create Snap transaction
+func (s *MidtransService) createSnapTransactionInternal(req SnapTransactionRequest) (*SnapTransactionResponse, error) {
+	// Setup Midtrans client
+	serverKey := config.GetMidtransServerKey()
+	
+	// Tentukan environment (sandbox atau production)
+	// Untuk sekarang kita pakai sandbox, bisa diubah via env variable nanti
+	env := midtrans.Sandbox
+	if os.Getenv("MIDTRANS_ENV") == "production" {
+		env = midtrans.Production
+	}
+	
+	snapClient := snap.Client{}
+	snapClient.New(serverKey, env)
+
+	// Konversi amount ke int64 (Midtrans menggunakan int64 untuk amount)
+	amountInt64 := int64(req.Amount)
+
+	// Buat Snap request
+	snapReq := &snap.Request{
+		TransactionDetails: midtrans.TransactionDetails{
+			OrderID:  req.OrderID,
+			GrossAmt: amountInt64,
+		},
+		CustomerDetail: &midtrans.CustomerDetails{
+			FName: req.CustomerName,
+			Email: req.CustomerEmail,
+		},
+	}
+
+	// Jika ada item details, tambahkan
+	if len(req.ItemDetails) > 0 {
+		snapReq.Items = &req.ItemDetails
+	} else {
+		// Default item: Top Up Saldo
+		snapReq.Items = &[]midtrans.ItemDetails{
+			{
+				ID:    "TOPUP",
+				Price: amountInt64,
+				Qty:   1,
+				Name:  "Top Up Saldo",
+			},
+		}
+	}
+
+	// Panggil API Midtrans untuk create transaction
+	snapResp, err := snapClient.CreateTransaction(snapReq)
+	if err != nil {
+		log.Printf("Error creating Snap transaction for Order ID %s: %v", req.OrderID, err)
+		return nil, fmt.Errorf("gagal membuat transaksi Midtrans: %w", err)
+	}
+
+	// Return response
+	response := &SnapTransactionResponse{
+		Token:       snapResp.Token,
+		RedirectURL: snapResp.RedirectURL,
+	}
+
+	log.Printf("Snap transaction created successfully for Order ID: %s, Token: %s", req.OrderID, snapResp.Token)
+	return response, nil
+}
+
+// CreateSnapTransactionFromMap adalah adapter method yang menerima map dan convert ke SnapTransactionRequest
+// Method ini digunakan untuk menghindari circular dependency dengan user package
+func (s *MidtransService) CreateSnapTransactionFromMap(reqMap map[string]interface{}) (map[string]interface{}, error) {
+	// Convert map ke SnapTransactionRequest
+	orderID, _ := reqMap["order_id"].(string)
+	amount, _ := reqMap["amount"].(float64)
+	customerName, _ := reqMap["customer_name"].(string)
+	customerEmail, _ := reqMap["customer_email"].(string)
+
+	req := SnapTransactionRequest{
+		OrderID:       orderID,
+		Amount:        amount,
+		CustomerName:  customerName,
+		CustomerEmail: customerEmail,
+		ItemDetails:   nil,
+	}
+
+	resp, err := s.createSnapTransactionInternal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert response ke map
+	return map[string]interface{}{
+		"token":        resp.Token,
+		"redirect_url": resp.RedirectURL,
+	}, nil
 }
 
 // validateSignature memverifikasi signature key dari Midtrans

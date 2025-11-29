@@ -33,6 +33,12 @@ const (
 
 const conversionRateXpToRp = 5.0 // 1 Xp = 5 Rp
 
+// MidtransServiceInterface adalah interface untuk Midtrans service (menghindari circular dependency)
+type MidtransServiceInterface interface {
+	CreateSnapTransaction(req interface{}) (interface{}, error)
+	CreateSnapTransactionFromMap(reqMap map[string]interface{}) (map[string]interface{}, error)
+}
+
 type Repository interface {
 	// User-related methods
 	CreateUserFromGoogle(u *User) error
@@ -72,7 +78,8 @@ type Repository interface {
 	GetAllActivePromotionBanners() ([]PromotionBanner, error)
 	
 	// Topup methods
-	ExecuteTopupTransaction(userID int, amountToAdd float64, paymentMethodID int) (string, error)
+	CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error)
+	UpdateTopupStatus(orderID string, newStatus string, transactionID string) error
 
 	// Transfer methods
 	FindUserIDByEmail(email string) (int, error)
@@ -86,11 +93,17 @@ type Service struct {
 	repo Repository
 	tokenStore *temporary_token.TokenStore
 	notifService *notification.NotificationService
+	midtransService MidtransServiceInterface
 }
 
 // NewService membuat instance baru dari Service
-func NewService(repo Repository, tokenStore *temporary_token.TokenStore, notifService *notification.NotificationService) *Service {
-	return &Service{repo: repo, tokenStore: tokenStore, notifService: notifService}
+func NewService(repo Repository, tokenStore *temporary_token.TokenStore, notifService *notification.NotificationService, midtransService MidtransServiceInterface) *Service {
+	return &Service{
+		repo: repo,
+		tokenStore: tokenStore,
+		notifService: notifService,
+		midtransService: midtransService,
+	}
 }
 
 // RegisterUser memproses data dari handler dan menyimpannya
@@ -418,43 +431,74 @@ func (s *Service) RequestWithdrawal(userIDStr string, req WithdrawRequest) (stri
 
 // --- User Top Up Service Method ---
 
-// RequestTopup memproses permintaan top up saldo (simulasi)
-func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (string, error) {
+// RequestTopup memproses permintaan top up saldo dengan Midtrans
+func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (*TopupResponse, error) {
 	userID, err := strconv.Atoi(userIDStr)
-	if err != nil { return "", errors.New("ID pengguna tidak valid") }
+	if err != nil {
+		return nil, errors.New("ID pengguna tidak valid")
+	}
 
 	// 1. Validasi Input Dasar
 	if req.Amount <= 0 {
-		return "", errors.New("jumlah top up harus lebih besar dari 0")
+		return nil, errors.New("jumlah top up harus lebih besar dari 0")
 	}
 
 	if req.Amount < minTopupAmount {
-		return "", fmt.Errorf("minimal top up adalah Rp %.0f", minTopupAmount)
+		return nil, fmt.Errorf("minimal top up adalah Rp %.0f", minTopupAmount)
 	}
 
 	// 2. Pastikan wallet user ada (fungsi ini otomatis membuat jika belum ada)
 	_, err = s.repo.FindOrCreateWalletByUserID(userID)
 	if err != nil {
-		return "", fmt.Errorf("gagal memeriksa/membuat wallet: %w", err)
+		return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err)
 	}
 
-	// 3. Eksekusi Transaksi Database (tambah saldo + catat riwayat)
-	orderID, err := s.repo.ExecuteTopupTransaction(userID, req.Amount, req.PaymentMethodID)
+	// 3. Ambil data user untuk customer details
+	userData, err := s.repo.FindByID(userID)
 	if err != nil {
-		// Error spesifik sudah ditangani di repo
-		return "", fmt.Errorf("gagal memproses top up: %w", err)
+		return nil, fmt.Errorf("gagal mengambil data pengguna: %w", err)
+	}
+	if userData == nil {
+		return nil, errors.New("pengguna tidak ditemukan")
 	}
 
-	// 4. (Nanti di sini) Generate Midtrans Snap Token/URL dan kirim ke user
-	// log.Printf("TODO: Generate Midtrans payment details for Order ID: %s", orderID)
+	// 4. Catat riwayat top up dengan status Pending (TIDAK tambah saldo dulu)
+	orderID, err := s.repo.CreateTopupTransaction(userID, req.Amount, req.PaymentMethodID)
+	if err != nil {
+		return nil, fmt.Errorf("gagal mencatat riwayat top up: %w", err)
+	}
 
-	go func() {
-		notifTitle := "Top Up Berhasil"
-		notifBody := fmt.Sprintf("Saldo Anda berhasil ditambah sebesar Rp %.0f.", req.Amount)
-		s.notifService.SendNotification(userID, notifTitle, notifBody, "TOPUP_SUCCESS")
-	}()
+	// 5. Buat Snap transaction di Midtrans menggunakan interface
+	// Kita perlu membuat request sesuai dengan yang diharapkan MidtransService
+	snapReqMap := map[string]interface{}{
+		"order_id":       orderID,
+		"amount":         req.Amount,
+		"customer_name":  userData.Fullname,
+		"customer_email": userData.Email,
+	}
 
-	return orderID, nil // Kembalikan Order ID jika sukses
+	// Panggil CreateSnapTransactionFromMap melalui interface
+	snapRespMap, err := s.midtransService.CreateSnapTransactionFromMap(snapReqMap)
+	if err != nil {
+		log.Printf("Error creating Snap transaction for Order ID %s: %v", orderID, err)
+		return nil, fmt.Errorf("gagal membuat transaksi Midtrans: %w", err)
+	}
+
+	token, _ := snapRespMap["token"].(string)
+	redirectURL, _ := snapRespMap["redirect_url"].(string)
+
+	response := &TopupResponse{
+		OrderID:     orderID,
+		SnapToken:   token,
+		RedirectURL: redirectURL,
+	}
+
+	log.Printf("Topup request created successfully. Order ID: %s, Snap Token: %s", orderID, token)
+
+	// Jangan kirim notifikasi dulu, tunggu webhook konfirmasi pembayaran berhasil
+	// Notifikasi akan dikirim setelah webhook mengkonfirmasi status Completed
+
+	return response, nil
 }
 
 // --- User Transfer Service Method ---

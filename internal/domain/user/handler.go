@@ -405,11 +405,11 @@ func (h *Handler) RequestTopup(c *gin.Context) {
 		return
 	}
 
-	orderID, err := h.service.RequestTopup(userIDStr.(string), req)
+	topupResp, err := h.service.RequestTopup(userIDStr.(string), req)
 	if err != nil {
 		// Service akan memberikan pesan error yang sesuai
 		errMsg := err.Error()
-		if strings.Contains(errMsg, "harus lebih besar dari 0") {
+		if strings.Contains(errMsg, "harus lebih besar dari 0") || strings.Contains(errMsg, "minimal top up") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses permintaan top up"})
@@ -417,12 +417,12 @@ func (h *Handler) RequestTopup(c *gin.Context) {
 		return
 	}
 
-	// Untuk simulasi, langsung berikan pesan sukses
+	// Return response dengan Snap token untuk frontend
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "Top up berhasil ditambahkan (simulasi)",
-		"order_id": orderID,
-		// Nanti di sini akan berisi Snap Token/URL dari Midtrans
-		// "payment_details": { ... }
+		"message":      "Permintaan top up berhasil dibuat",
+		"order_id":     topupResp.OrderID,
+		"snap_token":   topupResp.SnapToken,
+		"redirect_url": topupResp.RedirectURL,
 	})
 }
 

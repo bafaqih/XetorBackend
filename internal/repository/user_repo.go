@@ -3,11 +3,11 @@ package repository
 
 import (
 	"database/sql"
-	"log"
-	"fmt"
-	"strings"
-	"strconv"
 	"errors"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -202,31 +202,59 @@ func (r *UserRepository) UpdateAddress(id int, userID int, req *user.UpdateUserA
 	argId := 1
 
 	// Bangun query update dinamis
-	if req.Fullname != "" { fields = append(fields, fmt.Sprintf("fullname = $%d", argId)); args = append(args, req.Fullname); argId++ }
-	if req.Phone != "" { fields = append(fields, fmt.Sprintf("phone = $%d", argId)); args = append(args, req.Phone); argId++ }
-	if req.Address != "" { fields = append(fields, fmt.Sprintf("address = $%d", argId)); args = append(args, req.Address); argId++ }
-	if req.CityRegency != "" { fields = append(fields, fmt.Sprintf("city_regency = $%d", argId)); args = append(args, req.CityRegency); argId++ }
-	if req.Province != "" { fields = append(fields, fmt.Sprintf("province = $%d", argId)); args = append(args, req.Province); argId++ }
+	if req.Fullname != "" {
+		fields = append(fields, fmt.Sprintf("fullname = $%d", argId))
+		args = append(args, req.Fullname)
+		argId++
+	}
+	if req.Phone != "" {
+		fields = append(fields, fmt.Sprintf("phone = $%d", argId))
+		args = append(args, req.Phone)
+		argId++
+	}
+	if req.Address != "" {
+		fields = append(fields, fmt.Sprintf("address = $%d", argId))
+		args = append(args, req.Address)
+		argId++
+	}
+	if req.CityRegency != "" {
+		fields = append(fields, fmt.Sprintf("city_regency = $%d", argId))
+		args = append(args, req.CityRegency)
+		argId++
+	}
+	if req.Province != "" {
+		fields = append(fields, fmt.Sprintf("province = $%d", argId))
+		args = append(args, req.Province)
+		argId++
+	}
 	// Handle postal code (bisa diupdate jadi kosong)
 	if req.PostalCode != "" {
-		fields = append(fields, fmt.Sprintf("postal_code = $%d", argId)); args = append(args, sql.NullString{String: req.PostalCode, Valid: true}); argId++
+		fields = append(fields, fmt.Sprintf("postal_code = $%d", argId))
+		args = append(args, sql.NullString{String: req.PostalCode, Valid: true})
+		argId++
 	} else {
 		// Jika ingin bisa mengosongkan postal code, tambahkan ini
 		// fields = append(fields, fmt.Sprintf("postal_code = $%d", argId)); args = append(args, sql.NullString{Valid: false}); argId++
 	}
 
-
-	if len(fields) == 0 { return nil /* No fields to update */ }
+	if len(fields) == 0 {
+		return nil /* No fields to update */
+	}
 
 	// Tambahkan kondisi WHERE dengan id dan userID
 	args = append(args, id, userID)
 	query := fmt.Sprintf("UPDATE user_addresses SET %s, updated_at = NOW() WHERE id = $%d AND user_id = $%d",
 		strings.Join(fields, ", "), argId, argId+1)
 
-
 	result, err := r.db.Exec(query, args...)
-	if err != nil { log.Printf("Error updating address ID %d for user ID %d: %v", id, userID, err); return err }
-	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return sql.ErrNoRows /* Not found or not owned */ }
+	if err != nil {
+		log.Printf("Error updating address ID %d for user ID %d: %v", id, userID, err)
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows /* Not found or not owned */
+	}
 	log.Printf("Address updated for ID: %d", id)
 	return nil
 }
@@ -234,8 +262,14 @@ func (r *UserRepository) UpdateAddress(id int, userID int, req *user.UpdateUserA
 func (r *UserRepository) DeleteAddress(id int, userID int) error {
 	query := `DELETE FROM user_addresses WHERE id = $1 AND user_id = $2` // Hanya bisa hapus milik sendiri
 	result, err := r.db.Exec(query, id, userID)
-	if err != nil { log.Printf("Error deleting address ID %d for user ID %d: %v", id, userID, err); return err }
-	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return sql.ErrNoRows /* Not found or not owned */ }
+	if err != nil {
+		log.Printf("Error deleting address ID %d for user ID %d: %v", id, userID, err)
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows /* Not found or not owned */
+	}
 	log.Printf("Address deleted for ID: %d", id)
 	return nil
 }
@@ -250,7 +284,9 @@ func (r *UserRepository) GetDepositHistoryForUser(userID int) ([]user.Transactio
 		WHERE user_id = $1
 		ORDER BY deposit_time DESC`
 	rows, err := r.db.Query(query, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 
 	var items []user.TransactionHistoryItem
@@ -261,7 +297,9 @@ func (r *UserRepository) GetDepositHistoryForUser(userID int) ([]user.Transactio
 		item.Type = "deposit"
 		item.Description = "Deposit Sampah"
 
-		if err := rows.Scan(&id, &points, &item.Status, &item.Timestamp); err != nil { return nil, err }
+		if err := rows.Scan(&id, &points, &item.Status, &item.Timestamp); err != nil {
+			return nil, err
+		}
 		// --- PERUBAHAN FORMAT ID ---
 		item.ID = fmt.Sprintf("DP%05d", id) // Format: DP diikuti 5 digit angka (padding 0)
 		item.Points = sql.NullInt32{Int32: int32(points), Valid: true}
@@ -279,7 +317,9 @@ func (r *UserRepository) GetWithdrawHistoryForUser(userID int) ([]user.Transacti
 		WHERE uwh.user_id = $1
 		ORDER BY uwh.withdraw_time DESC`
 	rows, err := r.db.Query(query, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 
 	var items []user.TransactionHistoryItem
@@ -290,7 +330,9 @@ func (r *UserRepository) GetWithdrawHistoryForUser(userID int) ([]user.Transacti
 		var paymentName sql.NullString
 		item.Type = "withdraw"
 
-		if err := rows.Scan(&id, &amount, &item.Status, &item.Timestamp, &paymentName); err != nil { return nil, err }
+		if err := rows.Scan(&id, &amount, &item.Status, &item.Timestamp, &paymentName); err != nil {
+			return nil, err
+		}
 		// --- PERUBAHAN FORMAT ID ---
 		item.ID = fmt.Sprintf("WD%05d", id) // Format: WD diikuti 5 digit angka
 		item.Amount = sql.NullString{String: fmt.Sprintf("%.2f", amount), Valid: true}
@@ -312,7 +354,9 @@ func (r *UserRepository) GetTopupHistoryForUser(userID int) ([]user.TransactionH
 		WHERE uth.user_id = $1
 		ORDER BY uth.topup_time DESC`
 	rows, err := r.db.Query(query, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 
 	var items []user.TransactionHistoryItem
@@ -323,7 +367,9 @@ func (r *UserRepository) GetTopupHistoryForUser(userID int) ([]user.TransactionH
 		var paymentName sql.NullString
 		item.Type = "topup"
 
-		if err := rows.Scan(&id, &amount, &item.Status, &item.Timestamp, &paymentName); err != nil { return nil, err }
+		if err := rows.Scan(&id, &amount, &item.Status, &item.Timestamp, &paymentName); err != nil {
+			return nil, err
+		}
 		// --- PERUBAHAN FORMAT ID ---
 		item.ID = fmt.Sprintf("TP%05d", id) // Format: TP diikuti 5 digit angka
 		item.Amount = sql.NullString{String: fmt.Sprintf("%.2f", amount), Valid: true}
@@ -344,7 +390,9 @@ func (r *UserRepository) GetTransferHistoryForUser(userID int) ([]user.Transacti
 		WHERE user_id = $1
 		ORDER BY transfer_time DESC`
 	rows, err := r.db.Query(query, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 
 	var items []user.TransactionHistoryItem
@@ -355,7 +403,9 @@ func (r *UserRepository) GetTransferHistoryForUser(userID int) ([]user.Transacti
 		var recipient string
 		item.Type = "transfer"
 
-		if err := rows.Scan(&id, &amount, &recipient, &item.Status, &item.Timestamp); err != nil { return nil, err }
+		if err := rows.Scan(&id, &amount, &recipient, &item.Status, &item.Timestamp); err != nil {
+			return nil, err
+		}
 		// --- PERUBAHAN FORMAT ID ---
 		item.ID = fmt.Sprintf("TF%05d", id) // Format: TF diikuti 5 digit angka
 		item.Amount = sql.NullString{String: fmt.Sprintf("%.2f", amount), Valid: true}
@@ -367,19 +417,19 @@ func (r *UserRepository) GetTransferHistoryForUser(userID int) ([]user.Transacti
 
 // DeleteUserByID menghapus user berdasarkan ID
 func (r *UserRepository) DeleteUserByID(id int) error {
-    query := "DELETE FROM users WHERE id = $1"
-    result, err := r.db.Exec(query, id)
-    if err != nil {
-        log.Printf("Error deleting user ID %d: %v", id, err)
-        return err
-    }
-    rowsAffected, _ := result.RowsAffected()
-    if rowsAffected == 0 {
-        return sql.ErrNoRows // User tidak ditemukan
-    }
-    log.Printf("User deleted successfully for ID: %d", id)
-    // Data terkait akan otomatis terhapus oleh ON DELETE CASCADE
-    return nil
+	query := "DELETE FROM users WHERE id = $1"
+	result, err := r.db.Exec(query, id)
+	if err != nil {
+		log.Printf("Error deleting user ID %d: %v", id, err)
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows // User tidak ditemukan
+	}
+	log.Printf("User deleted successfully for ID: %d", id)
+	// Data terkait akan otomatis terhapus oleh ON DELETE CASCADE
+	return nil
 }
 
 // --- User Wallet ---
@@ -485,36 +535,36 @@ func (r *UserRepository) FindOrCreateStatisticsByUserID(userID int) (*user.UserS
 
 // UpdateWithdrawStatus memperbarui status withdraw berdasarkan orderID (misal: "WD-123")
 func (r *UserRepository) UpdateWithdrawStatus(orderID string, newStatus string, transactionID string) error {
-    // Ekstrak ID asli dari orderID (misal: "WD-123" -> 123)
-    parts := strings.Split(orderID, "-")
-    if len(parts) != 2 || parts[0] != "WD" {
-        log.Printf("Invalid withdraw order ID format for status update: %s", orderID)
-        // Kita return nil agar Midtrans tidak retry, tapi log error
-        // Atau return error jika ingin Midtrans coba lagi (hati-hati infinite loop)
-        return nil // Atau errors.New("invalid order ID format")
-    }
-    withdrawID, err := strconv.Atoi(parts[1])
-    if err != nil {
-        log.Printf("Error converting withdraw ID from order ID %s: %v", orderID, err)
-        return nil // Atau errors.New("invalid withdraw ID")
-    }
+	// Ekstrak ID asli dari orderID (misal: "WD-123" -> 123)
+	parts := strings.Split(orderID, "-")
+	if len(parts) != 2 || parts[0] != "WD" {
+		log.Printf("Invalid withdraw order ID format for status update: %s", orderID)
+		// Kita return nil agar Midtrans tidak retry, tapi log error
+		// Atau return error jika ingin Midtrans coba lagi (hati-hati infinite loop)
+		return nil // Atau errors.New("invalid order ID format")
+	}
+	withdrawID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		log.Printf("Error converting withdraw ID from order ID %s: %v", orderID, err)
+		return nil // Atau errors.New("invalid withdraw ID")
+	}
 
-    // TODO: Tambahkan kolom transaction_id dari Midtrans ke tabel user_withdraw_histories jika perlu
+	// TODO: Tambahkan kolom transaction_id dari Midtrans ke tabel user_withdraw_histories jika perlu
 
-    query := `UPDATE user_withdraw_histories SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'Pending'` // Hanya update jika masih pending
-    result, err := r.db.Exec(query, newStatus, withdrawID)
-    if err != nil {
-        log.Printf("Error updating withdraw status for ID %d: %v", withdrawID, err)
-        return err
-    }
-    rowsAffected, _ := result.RowsAffected()
-    if rowsAffected == 0 {
-        log.Printf("No pending withdraw found or status already updated for ID %d (Order ID: %s)", withdrawID, orderID)
-        // Return nil karena mungkin notifikasi datang telat atau duplikat
-        return nil
-    }
-    log.Printf("Withdraw status updated successfully for ID: %d (Order ID: %s) to %s", withdrawID, orderID, newStatus)
-    return nil
+	query := `UPDATE user_withdraw_histories SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'Pending'` // Hanya update jika masih pending
+	result, err := r.db.Exec(query, newStatus, withdrawID)
+	if err != nil {
+		log.Printf("Error updating withdraw status for ID %d: %v", withdrawID, err)
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("No pending withdraw found or status already updated for ID %d (Order ID: %s)", withdrawID, orderID)
+		// Return nil karena mungkin notifikasi datang telat atau duplikat
+		return nil
+	}
+	log.Printf("Withdraw status updated successfully for ID: %d (Order ID: %s) to %s", withdrawID, orderID, newStatus)
+	return nil
 }
 
 // --- Withdraw Process Functions ---
@@ -664,12 +714,53 @@ func (r *UserRepository) GetAllActivePromotionBanners() ([]user.PromotionBanner,
 
 // --- Top Up Process Functions ---
 
-// ExecuteTopupTransaction menjalankan penambahan saldo dan pencatatan riwayat top up dalam satu transaksi DB
-func (r *UserRepository) ExecuteTopupTransaction(userID int, amountToAdd float64, paymentMethodID int) (string, error) {
+// CreateTopupTransaction mencatat riwayat top up dengan status Pending (TIDAK menambah saldo)
+// Saldo akan ditambahkan setelah webhook Midtrans mengkonfirmasi pembayaran berhasil
+func (r *UserRepository) CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error) {
+	// Pastikan wallet ada (fungsi ini sudah otomatis membuat jika belum ada)
+	_, err := r.FindOrCreateWalletByUserID(userID)
+	if err != nil {
+		return "", fmt.Errorf("gagal memastikan wallet ada: %w", err)
+	}
+
+	// Catat riwayat top up dengan status Pending
+	queryInsertHistory := `
+		INSERT INTO user_topup_histories (user_id, payment_method_id, amount, status, topup_time)
+		VALUES ($1, $2, $3, 'Pending', NOW())
+		RETURNING id`
+
+	var topupID int
+	err = r.db.QueryRow(queryInsertHistory, userID, paymentMethodID, amount).Scan(&topupID)
+	if err != nil {
+		log.Printf("Error inserting topup history for user ID %d: %v", userID, err)
+		return "", errors.New("gagal mencatat riwayat top up")
+	}
+
+	orderID := fmt.Sprintf("TP-%d", topupID)
+	log.Printf("Topup history created with ID %d (Order ID: %s) for user ID %d - Status: Pending", topupID, orderID, userID)
+
+	return orderID, nil
+}
+
+// UpdateTopupStatus memperbarui status topup berdasarkan orderID dan menambah saldo jika status Completed
+func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, transactionID string) error {
+	// Ekstrak ID asli dari orderID (misal: "TP-123" -> 123)
+	parts := strings.Split(orderID, "-")
+	if len(parts) != 2 || parts[0] != "TP" {
+		log.Printf("Invalid topup order ID format for status update: %s", orderID)
+		return nil // Return nil agar Midtrans tidak retry
+	}
+	topupID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		log.Printf("Error converting topup ID from order ID %s: %v", orderID, err)
+		return nil
+	}
+
+	// Mulai transaksi database
 	tx, err := r.db.Begin()
 	if err != nil {
-		log.Printf("Error starting transaction for topup user ID %d: %v", userID, err)
-		return "", errors.New("gagal memulai transaksi database")
+		log.Printf("Error starting transaction for updating topup status: %v", err)
+		return err
 	}
 	defer func() {
 		if p := recover(); p != nil {
@@ -680,48 +771,64 @@ func (r *UserRepository) ExecuteTopupTransaction(userID int, amountToAdd float64
 		} else {
 			err = tx.Commit()
 			if err != nil {
-				log.Printf("Error committing topup transaction for user ID %d: %v", userID, err)
+				log.Printf("Error committing topup status update transaction: %v", err)
 			}
 		}
 	}()
 
-	// 1. Tambahkan saldo
-	queryUpdateWallet := `
-		UPDATE user_wallets
-		SET balance = balance + $1, updated_at = NOW()
-		WHERE user_id = $2
-		RETURNING balance`
-
-	var currentBalance float64
-	err = tx.QueryRow(queryUpdateWallet, amountToAdd, userID).Scan(&currentBalance)
-	// Kita perlu memastikan wallet ada SEBELUM memanggil ini,
-	// Fungsi FindOrCreateWalletByUserID bisa dipanggil di service sebelum eksekusi transaksi
+	// 1. Ambil data topup untuk mendapatkan user_id dan amount
+	var userID int
+	var amount float64
+	var currentStatus string
+	queryGetTopup := `SELECT user_id, amount, status FROM user_topup_histories WHERE id = $1`
+	err = tx.QueryRow(queryGetTopup, topupID).Scan(&userID, &amount, &currentStatus)
 	if err != nil {
-		log.Printf("Error updating wallet balance during topup for user ID %d: %v", userID, err)
-		// Kembalikan error jika user_id tidak ada di wallet (seharusnya tidak terjadi jika FindOrCreate dipanggil dulu)
 		if err == sql.ErrNoRows {
-			return "", errors.New("wallet pengguna tidak ditemukan")
+			log.Printf("Topup not found for ID %d (Order ID: %s)", topupID, orderID)
+			return nil // Return nil karena mungkin notifikasi datang telat atau duplikat
 		}
-		return "", errors.New("gagal mengupdate saldo")
+		log.Printf("Error getting topup data for ID %d: %v", topupID, err)
+		return err
 	}
 
-	// 2. Catat riwayat top up
-	queryInsertHistory := `
-		INSERT INTO user_topup_histories (user_id, payment_method_id, amount, status, topup_time)
-		VALUES ($1, $2, $3, 'Completed', NOW()) -- Status langsung Completed untuk simulasi
-		RETURNING id`
+	// Hanya update jika status masih Pending (untuk menghindari double processing)
+	if currentStatus != "Pending" {
+		log.Printf("Topup ID %d (Order ID: %s) already processed with status: %s", topupID, orderID, currentStatus)
+		return nil // Return nil karena sudah diproses
+	}
 
-	var topupID int
-	err = tx.QueryRow(queryInsertHistory, userID, paymentMethodID, amountToAdd).Scan(&topupID)
+	// 2. Update status topup
+	queryUpdateStatus := `UPDATE user_topup_histories SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'Pending'`
+	result, err := tx.Exec(queryUpdateStatus, newStatus, topupID)
 	if err != nil {
-		log.Printf("Error inserting topup history for user ID %d: %v", userID, err)
-		return "", errors.New("gagal mencatat riwayat top up")
+		log.Printf("Error updating topup status for ID %d: %v", topupID, err)
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("No pending topup found or status already updated for ID %d (Order ID: %s)", topupID, orderID)
+		return nil
 	}
 
-	orderID := fmt.Sprintf("TP-%d", topupID)
-	log.Printf("Topup history created with ID %d (Order ID: %s) for user ID %d", topupID, orderID, userID)
+	// 3. Jika status Completed, tambahkan saldo ke wallet
+	if newStatus == "Completed" {
+		queryUpdateWallet := `
+			UPDATE user_wallets
+			SET balance = balance + $1, updated_at = NOW()
+			WHERE user_id = $2
+			RETURNING balance`
 
-	return orderID, nil
+		var currentBalance float64
+		err = tx.QueryRow(queryUpdateWallet, amount, userID).Scan(&currentBalance)
+		if err != nil {
+			log.Printf("Error updating wallet balance during topup completion for user ID %d: %v", userID, err)
+			return errors.New("gagal mengupdate saldo")
+		}
+		log.Printf("Balance added successfully for user ID %d. New balance: %.2f", userID, currentBalance)
+	}
+
+	log.Printf("Topup status updated successfully for ID: %d (Order ID: %s) to %s", topupID, orderID, newStatus)
+	return nil
 }
 
 // --- Transfer Xpoin Functions ---
@@ -800,7 +907,6 @@ func (r *UserRepository) ExecuteTransferTransaction(senderUserID, recipientUserI
 		return "", errors.New("wallet penerima tidak ditemukan")
 	}
 
-
 	// 3. Catat riwayat transfer
 	queryInsertHistory := `
 		INSERT INTO user_transfer_histories (user_id, amount, recipient_email, status, transfer_time)
@@ -837,11 +943,18 @@ func (r *UserRepository) ExecuteConversionTransaction(
 ) (*user.UserWallet, error) { // Kembalikan wallet terbaru
 
 	tx, err := r.db.Begin()
-	if err != nil { return nil, errors.New("gagal memulai transaksi database") }
+	if err != nil {
+		return nil, errors.New("gagal memulai transaksi database")
+	}
 	defer func() {
-		if p := recover(); p != nil { tx.Rollback(); panic(p) } else
-		if err != nil { tx.Rollback() } else
-		{ err = tx.Commit() }
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
 	}()
 
 	// 1. Update Wallet (dengan validasi saldo/poin tidak minus)
@@ -913,7 +1026,7 @@ func (r *UserRepository) UpdateUserProfile(id int, req *user.UpdateUserProfileRe
 		args = append(args, req.Email)
 		argId++
 	}
-	
+
 	if req.Phone != "" { // Hanya update jika phone di request tidak kosong
 		fields = append(fields, fmt.Sprintf("phone = $%d", argId))
 		args = append(args, sql.NullString{String: req.Phone, Valid: true}) // Simpan sebagai string valid
@@ -936,13 +1049,13 @@ func (r *UserRepository) UpdateUserProfile(id int, req *user.UpdateUserProfileRe
 
 	result, err := r.db.Exec(query, args...)
 	if err != nil {
-		 log.Printf("Error updating user profile ID %d: %v", id, err)
-		 // Cek error duplikat email
-		 if strings.Contains(err.Error(), "users_email_key") {
-			 return errors.New("email sudah digunakan")
-		 }
-		
-		 return errors.New("gagal mengupdate profil")
+		log.Printf("Error updating user profile ID %d: %v", id, err)
+		// Cek error duplikat email
+		if strings.Contains(err.Error(), "users_email_key") {
+			return errors.New("email sudah digunakan")
+		}
+
+		return errors.New("gagal mengupdate profil")
 	}
 
 	rowsAffected, _ := result.RowsAffected()
@@ -980,7 +1093,7 @@ func (r *UserRepository) AddDepositHistory(userID, partnerID, totalPoints int, d
 		VALUES ($1, $2, $3, 'Completed', $4)
 		RETURNING id` // <-- Tambahkan RETURNING id
 
-	var userDepositHistoryID int // <-- Variabel untuk menampung ID
+	var userDepositHistoryID int                                                                         // <-- Variabel untuk menampung ID
 	err := r.db.QueryRow(query, userID, partnerID, totalPoints, depositTime).Scan(&userDepositHistoryID) // <-- Scan ID-nya
 	if err != nil {
 		log.Printf("Error inserting user deposit history for user ID %d: %v", userID, err)
@@ -992,39 +1105,60 @@ func (r *UserRepository) AddDepositHistory(userID, partnerID, totalPoints int, d
 // UpdateUserWalletOnDeposit: Pastikan fungsi ini ada
 func (r *UserRepository) UpdateUserWalletOnDeposit(userID, pointsToAdd int) error {
 	query := `UPDATE user_wallets SET xpoin = xpoin + $1, updated_at = NOW() WHERE user_id = $2`
-	result, err := r.db.Exec(query, pointsToAdd, userID);
-    if err != nil { return errors.New("gagal update wallet user") }
-	rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return errors.New("wallet user tidak ditemukan") }
+	result, err := r.db.Exec(query, pointsToAdd, userID)
+	if err != nil {
+		return errors.New("gagal update wallet user")
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return errors.New("wallet user tidak ditemukan")
+	}
 	return nil
 }
 
 // GetWasteDetailFactors: Pastikan fungsi ini ada dan mengembalikan map[int]user.ImpactFactors
 func (r *UserRepository) GetWasteDetailFactors(wasteDetailIDs []int) (map[int]user.ImpactFactors, error) { // Return type dari model user
-    if len(wasteDetailIDs) == 0 { return make(map[int]user.ImpactFactors), nil }
-    placeholders := make([]string, len(wasteDetailIDs)); args := make([]interface{}, len(wasteDetailIDs))
-    for i, id := range wasteDetailIDs { placeholders[i] = fmt.Sprintf("$%d", i+1); args[i] = id }
-    query := fmt.Sprintf(`SELECT id, COALESCE(energy_factor, 0), COALESCE(co2_factor, 0), COALESCE(water_factor, 0), COALESCE(tree_factor, 0) FROM waste_details WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	if len(wasteDetailIDs) == 0 {
+		return make(map[int]user.ImpactFactors), nil
+	}
+	placeholders := make([]string, len(wasteDetailIDs))
+	args := make([]interface{}, len(wasteDetailIDs))
+	for i, id := range wasteDetailIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(`SELECT id, COALESCE(energy_factor, 0), COALESCE(co2_factor, 0), COALESCE(water_factor, 0), COALESCE(tree_factor, 0) FROM waste_details WHERE id IN (%s)`, strings.Join(placeholders, ","))
 
-    rows, err := r.db.Query(query, args...); if err != nil { return nil, err }
-    defer rows.Close()
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    factorsMap := make(map[int]user.ImpactFactors) // Gunakan struct dari model user
-    for rows.Next() {
-        var detailID int
-        var factors user.ImpactFactors // Gunakan struct dari model user
-        if err := rows.Scan(&detailID, &factors.Energy, &factors.CO2, &factors.Water, &factors.Tree); err != nil { return nil, err }
-        factorsMap[detailID] = factors
-    }
-    return factorsMap, rows.Err()
+	factorsMap := make(map[int]user.ImpactFactors) // Gunakan struct dari model user
+	for rows.Next() {
+		var detailID int
+		var factors user.ImpactFactors // Gunakan struct dari model user
+		if err := rows.Scan(&detailID, &factors.Energy, &factors.CO2, &factors.Water, &factors.Tree); err != nil {
+			return nil, err
+		}
+		factorsMap[detailID] = factors
+	}
+	return factorsMap, rows.Err()
 }
 
 // UpdateUserStatisticsOnDeposit: Pastikan fungsi ini ada dan benar (tree jadi int)
 func (r *UserRepository) UpdateUserStatisticsOnDeposit(userID int, totalWaste float64, energySaved, co2Saved, waterSaved float64, treesSaved int) error {
-    query := `UPDATE user_statistics SET waste = waste + $1, energy = energy + $2, co2 = co2 + $3, water = water + $4, tree = tree + $5, updated_at = NOW() WHERE user_id = $6`
-    result, err := r.db.Exec(query, totalWaste, energySaved, co2Saved, waterSaved, treesSaved, userID);
-    if err != nil { return errors.New("gagal update statistik user") }
-    rowsAffected, _ := result.RowsAffected(); if rowsAffected == 0 { return errors.New("statistik user tidak ditemukan") }
-    return nil
+	query := `UPDATE user_statistics SET waste = waste + $1, energy = energy + $2, co2 = co2 + $3, water = water + $4, tree = tree + $5, updated_at = NOW() WHERE user_id = $6`
+	result, err := r.db.Exec(query, totalWaste, energySaved, co2Saved, waterSaved, treesSaved, userID)
+	if err != nil {
+		return errors.New("gagal update statistik user")
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return errors.New("statistik user tidak ditemukan")
+	}
+	return nil
 }
 
 // --- Google Auth Functions ---
@@ -1034,18 +1168,18 @@ func (r *UserRepository) CreateUserFromGoogle(u *user.User) error {
 	randomPassword := uuid.New().String()
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(randomPassword), bcrypt.DefaultCost)
-    if err != nil {
-        log.Printf("Error generating random hash for Google user: %v", err)
-        return errors.New("gagal mengamankan akun Google")
-    }
+	if err != nil {
+		log.Printf("Error generating random hash for Google user: %v", err)
+		return errors.New("gagal mengamankan akun Google")
+	}
 
 	queryUsers := `
         INSERT INTO users (fullname, email, phone, password, photo, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
         RETURNING id, created_at, updated_at`
 
-    err = r.db.QueryRow(queryUsers, u.Fullname, u.Email, u.Phone, string(hashedPassword), u.Photo).Scan(
-        &u.ID, &u.CreatedAt, &u.UpdatedAt,
+	err = r.db.QueryRow(queryUsers, u.Fullname, u.Email, u.Phone, string(hashedPassword), u.Photo).Scan(
+		&u.ID, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "users_email_key") {
@@ -1054,21 +1188,21 @@ func (r *UserRepository) CreateUserFromGoogle(u *user.User) error {
 		log.Printf("Error creating Google user in users table: %v", err)
 		return errors.New("gagal menyimpan user google")
 	}
-	
+
 	log.Printf("User created from Google Auth with ID: %d", u.ID)
 
-    // 2. Buat Wallet dan Statistik (kita panggil fungsi yg sudah ada)
-    _, err = r.FindOrCreateWalletByUserID(u.ID)
-    if err != nil {
-        log.Printf("Failed to create wallet for Google user ID %d: %v", u.ID, err)
-        // Lanjutkan saja, jangan gagalkan registrasi
-    }
+	// 2. Buat Wallet dan Statistik (kita panggil fungsi yg sudah ada)
+	_, err = r.FindOrCreateWalletByUserID(u.ID)
+	if err != nil {
+		log.Printf("Failed to create wallet for Google user ID %d: %v", u.ID, err)
+		// Lanjutkan saja, jangan gagalkan registrasi
+	}
 
-    _, err = r.FindOrCreateStatisticsByUserID(u.ID)
-     if err != nil {
-        log.Printf("Failed to create statistics for Google user ID %d: %v", u.ID, err)
-        // Lanjutkan saja
-    }
+	_, err = r.FindOrCreateStatisticsByUserID(u.ID)
+	if err != nil {
+		log.Printf("Failed to create statistics for Google user ID %d: %v", u.ID, err)
+		// Lanjutkan saja
+	}
 
 	return nil
 }

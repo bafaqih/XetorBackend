@@ -1,6 +1,10 @@
 package midtrans
 
-import "time"
+import (
+	"time"
+
+	"github.com/midtrans/midtrans-go"
+)
 
 // MidtransTransactionNotification adalah struct untuk payload webhook umum
 // Referensi: https://docs.midtrans.com/en/after-payment/http-notification
@@ -38,3 +42,18 @@ type MidtransTransactionNotification struct {
 // Struktur payload webhook Midtrans bisa bervariasi tergantung jenis transaksi
 // (pembayaran vs disbursement). Pastikan untuk memeriksa dokumentasi API Midtrans
 // yang relevan (terutama untuk Disbursement/Payout) dan sesuaikan struct ini jika perlu.
+
+// SnapTransactionRequest adalah struct untuk request create Snap transaction
+type SnapTransactionRequest struct {
+	OrderID     string  `json:"order_id"`     // Order ID dari sistem kita (misal: "TP-123")
+	Amount      float64 `json:"amount"`       // Jumlah pembayaran
+	CustomerName string `json:"customer_name"` // Nama customer
+	CustomerEmail string `json:"customer_email"` // Email customer
+	ItemDetails []midtrans.ItemDetails `json:"item_details"` // Detail item (opsional)
+}
+
+// SnapTransactionResponse adalah struct untuk response create Snap transaction
+type SnapTransactionResponse struct {
+	Token       string `json:"token"`        // Snap token untuk frontend
+	RedirectURL string `json:"redirect_url"` // URL redirect (alternatif)
+}

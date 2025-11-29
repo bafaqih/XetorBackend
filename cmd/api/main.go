@@ -33,17 +33,19 @@ func main() {
 
 	// Komponen User
 	userRepo := repository.NewUserRepository(db)
-	userService := user.NewService(userRepo, tokenStore, notifService)
+	
+	// Komponen Midtrans (dibuat dulu karena UserService butuh ini)
+	midtransService := midtrans.NewMidtransService(userRepo)
+	midtransHandler := midtrans.NewMidtransHandler(midtransService)
+	
+	// UserService sekarang butuh MidtransService
+	userService := user.NewService(userRepo, tokenStore, notifService, midtransService)
 	userHandler := user.NewHandler(userService)
 
 	// Komponen Partner
 	partnerRepo := repository.NewPartnerRepository(db)
 	partnerService := partner.NewPartnerService(partnerRepo, userRepo, tokenStore, adminRepo, notifService)
 	partnerHandler := partner.NewPartnerHandler(partnerService)
-
-	// Komponen Midtrans
-	midtransService := midtrans.NewMidtransService(userRepo)
-	midtransHandler := midtrans.NewMidtransHandler(midtransService)
 
 	router := server.NewRouter(userHandler, adminHandler, midtransHandler, partnerHandler)
 	// Gunakan port 8081 untuk Xetor agar tidak bentrok dengan web portofolio di 8080
