@@ -81,7 +81,7 @@ type Repository interface {
 	
 	// Topup methods
 	CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error)
-	UpdateTopupStatus(orderID string, newStatus string, transactionID string) error
+	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error
 
 	// Transfer methods
 	FindUserIDByEmail(email string) (int, error)
