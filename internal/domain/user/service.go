@@ -3,9 +3,7 @@ package user
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -52,8 +50,8 @@ type Repository interface {
 	DeleteUserByID(id int) error
 	FindOrCreateWalletByUserID(userID int) (*UserWallet, error)
 	FindOrCreateStatisticsByUserID(userID int) (*UserStatistic, error)
-	UpdateUserProfile(id int, req *UpdateUserProfileRequest) error 
-    UpdateUserPhotoURL(id int, photoURL string) error
+	UpdateUserProfile(id int, req *UpdateUserProfileRequest) error
+	UpdateUserPhotoURL(id int, photoURL string) error
 
 	// Address-related methods
 	CreateAddress(addr *UserAddress) error
@@ -75,12 +73,13 @@ type Repository interface {
 
 	// Payment methods
 	GetAllActivePaymentMethods() ([]PaymentMethod, error)
-	
+
 	// Promotion banners
 	GetAllActivePromotionBanners() ([]PromotionBanner, error)
-	
+
 	// Topup methods
 	CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error)
+	GenerateTopupOrderID() (string, error) // Generate orderID tanpa create record
 	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error
 
 	// Transfer methods
@@ -92,18 +91,18 @@ type Repository interface {
 }
 
 type Service struct {
-	repo Repository
-	tokenStore *temporary_token.TokenStore
-	notifService *notification.NotificationService
+	repo            Repository
+	tokenStore      *temporary_token.TokenStore
+	notifService    *notification.NotificationService
 	midtransService MidtransServiceInterface
 }
 
 // NewService membuat instance baru dari Service
 func NewService(repo Repository, tokenStore *temporary_token.TokenStore, notifService *notification.NotificationService, midtransService MidtransServiceInterface) *Service {
 	return &Service{
-		repo: repo,
-		tokenStore: tokenStore,
-		notifService: notifService,
+		repo:            repo,
+		tokenStore:      tokenStore,
+		notifService:    notifService,
 		midtransService: midtransService,
 	}
 }
@@ -169,7 +168,6 @@ func (s *Service) ChangePassword(userIDStr string, req ChangePasswordRequest) er
 		return errors.New("password baru minimal 6 karakter")
 	}
 
-
 	// 2. Konversi userID
 	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
@@ -215,7 +213,8 @@ func (s *Service) ChangePassword(userIDStr string, req ChangePasswordRequest) er
 // --- User Address Service Methods ---
 
 func (s *Service) AddUserAddress(userIDStr string, req CreateUserAddressRequest) (*UserAddress, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		return nil, errors.New("ID pengguna tidak valid")
 	}
 
@@ -230,37 +229,43 @@ func (s *Service) AddUserAddress(userIDStr string, req CreateUserAddressRequest)
 	}
 
 	err = s.repo.CreateAddress(addr)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return addr, nil
 }
 
 func (s *Service) GetUserAddresses(userIDStr string) ([]UserAddress, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		return nil, errors.New("ID pengguna tidak valid")
 	}
 	return s.repo.GetAddressesByUserID(userID)
 }
 
 func (s *Service) GetUserAddressByID(id int, userIDStr string) (*UserAddress, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		return nil, errors.New("ID pengguna tidak valid")
 	}
 	return s.repo.GetAddressByID(id, userID)
 }
 
 func (s *Service) UpdateUserAddress(id int, userIDStr string, req UpdateUserAddressRequest) error {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		return errors.New("ID pengguna tidak valid")
 	}
 	// Cek apakah ada data yang diupdate
 	if req.Fullname == "" && req.Phone == "" && req.Address == "" && req.CityRegency == "" && req.Province == "" && req.PostalCode == "" {
-		 return errors.New("tidak ada data untuk diupdate")
+		return errors.New("tidak ada data untuk diupdate")
 	}
 	return s.repo.UpdateAddress(id, userID, &req)
 }
 
 func (s *Service) DeleteUserAddress(id int, userIDStr string) error {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		return errors.New("ID pengguna tidak valid")
 	}
 	return s.repo.DeleteAddress(id, userID)
@@ -270,7 +275,8 @@ func (s *Service) DeleteUserAddress(id int, userIDStr string) error {
 
 // GetTransactionHistory menggabungkan dan mengurutkan semua riwayat transaksi user
 func (s *Service) GetTransactionHistory(userIDStr string) ([]TransactionHistoryItem, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		return nil, errors.New("ID pengguna tidak valid")
 	}
 
@@ -278,19 +284,27 @@ func (s *Service) GetTransactionHistory(userIDStr string) ([]TransactionHistoryI
 
 	// Ambil data dari masing-masing tabel
 	depositHistory, err := s.repo.GetDepositHistoryForUser(userID)
-	if err != nil { log.Printf("Error getting deposit history: %v", err); /* Lanjutkan saja */ }
+	if err != nil {
+		log.Printf("Error getting deposit history: %v", err) /* Lanjutkan saja */
+	}
 	allTransactions = append(allTransactions, depositHistory...)
 
 	withdrawHistory, err := s.repo.GetWithdrawHistoryForUser(userID)
-	if err != nil { log.Printf("Error getting withdraw history: %v", err); /* Lanjutkan saja */ }
+	if err != nil {
+		log.Printf("Error getting withdraw history: %v", err) /* Lanjutkan saja */
+	}
 	allTransactions = append(allTransactions, withdrawHistory...)
 
 	topupHistory, err := s.repo.GetTopupHistoryForUser(userID)
-	if err != nil { log.Printf("Error getting topup history: %v", err); /* Lanjutkan saja */ }
+	if err != nil {
+		log.Printf("Error getting topup history: %v", err) /* Lanjutkan saja */
+	}
 	allTransactions = append(allTransactions, topupHistory...)
 
 	transferHistory, err := s.repo.GetTransferHistoryForUser(userID)
-	if err != nil { log.Printf("Error getting transfer history: %v", err); /* Lanjutkan saja */ }
+	if err != nil {
+		log.Printf("Error getting transfer history: %v", err) /* Lanjutkan saja */
+	}
 	allTransactions = append(allTransactions, transferHistory...)
 
 	// Urutkan semua transaksi berdasarkan waktu (terbaru dulu)
@@ -303,20 +317,20 @@ func (s *Service) GetTransactionHistory(userIDStr string) ([]TransactionHistoryI
 
 // DeleteAccount menghapus akun user
 func (s *Service) DeleteAccount(userIDStr string) error {
-    userID, err := strconv.Atoi(userIDStr)
-    if err != nil {
-        log.Printf("Error converting userID string to int: %v", err)
-        return errors.New("ID pengguna tidak valid")
-    }
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		log.Printf("Error converting userID string to int: %v", err)
+		return errors.New("ID pengguna tidak valid")
+	}
 
-    err = s.repo.DeleteUserByID(userID)
-    if err != nil {
-         if err == sql.ErrNoRows {
-            return errors.New("pengguna tidak ditemukan")
-         }
-        return err // Error teknis repo
-    }
-    return nil // Sukses
+	err = s.repo.DeleteUserByID(userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errors.New("pengguna tidak ditemukan")
+		}
+		return err // Error teknis repo
+	}
+	return nil // Sukses
 }
 
 // --- Payment Methods Service Method ---
@@ -362,7 +376,8 @@ func (s *Service) GetUserWallet(userIDStr string) (*UserWallet, error) {
 
 // GetUserStatistics mengambil data statistik user (membuat jika belum ada)
 func (s *Service) GetUserStatistics(userIDStr string) (*UserStatistic, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil {
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
 		log.Printf("Error converting userID string to int: %v", err)
 		return nil, errors.New("ID pengguna tidak valid")
 	}
@@ -379,13 +394,15 @@ func (s *Service) GetUserStatistics(userIDStr string) (*UserStatistic, error) {
 // RequestWithdrawal memproses permintaan penarikan saldo
 func (s *Service) RequestWithdrawal(userIDStr string, req WithdrawRequest) (string, error) {
 	userID, err := strconv.Atoi(userIDStr)
-	if err != nil { return "", errors.New("ID pengguna tidak valid") }
+	if err != nil {
+		return "", errors.New("ID pengguna tidak valid")
+	}
 
 	// 1. Validasi Input Dasar
 	if req.Amount < minWithdrawalAmount {
 		return "", fmt.Errorf("minimal penarikan adalah Rp %.0f", minWithdrawalAmount)
 	}
-	
+
 	// Validasi Payment Method ID
 	paymentMethod, err := s.repo.GetPaymentMethodByID(req.PaymentMethodID)
 	if err != nil {
@@ -398,7 +415,7 @@ func (s *Service) RequestWithdrawal(userIDStr string, req WithdrawRequest) (stri
 	if paymentMethod.Status != "Active" {
 		return "", errors.New("metode pembayaran tidak aktif")
 	}
-	
+
 	// TODO: Validasi Account Number (mungkin cek format dasar)
 
 	// 2. Hitung Total dan Cek Saldo
@@ -464,9 +481,9 @@ func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (*TopupRespon
 		return nil, errors.New("pengguna tidak ditemukan")
 	}
 
-	// 4. Generate order_id tanpa create record di DB
+	// 4. Generate order_id menggunakan sequence tanpa create record di DB
 	// Record akan dibuat saat webhook pending pertama kali (setelah user pilih payment method)
-	orderID, err := s.generateTopupOrderID(userID, req.Amount)
+	orderID, err := s.repo.GenerateTopupOrderID()
 	if err != nil {
 		return nil, fmt.Errorf("gagal membuat order ID: %w", err)
 	}
@@ -505,31 +522,14 @@ func (s *Service) RequestTopup(userIDStr string, req TopupRequest) (*TopupRespon
 	return response, nil
 }
 
-// generateTopupOrderID membuat order ID unik untuk topup tanpa create DB record
-// Format: TP-{userID}-{timestamp}-{random}
-// Record akan dibuat saat webhook pending pertama kali
-func (s *Service) generateTopupOrderID(userID int, amount float64) (string, error) {
-	// Generate random string untuk uniqueness
-	randomBytes := make([]byte, 4)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", fmt.Errorf("gagal generate random: %w", err)
-	}
-	randomStr := hex.EncodeToString(randomBytes)
-	
-	// Format: TP-{userID}-{timestamp}-{random}
-	// Timestamp dalam format Unix (10 digit)
-	timestamp := time.Now().Unix()
-	orderID := fmt.Sprintf("TP-%d-%d-%s", userID, timestamp, randomStr)
-	
-	return orderID, nil
-}
-
 // --- User Transfer Service Method ---
 
 // TransferXpoin memproses transfer xpoin antar user
 func (s *Service) TransferXpoin(senderUserIDStr string, req TransferRequest) (string, error) {
 	senderUserID, err := strconv.Atoi(senderUserIDStr)
-	if err != nil { return "", errors.New("ID pengirim tidak valid") }
+	if err != nil {
+		return "", errors.New("ID pengirim tidak valid")
+	}
 
 	// 1. Validasi Input Dasar
 	if req.Amount <= 0 {
@@ -553,9 +553,13 @@ func (s *Service) TransferXpoin(senderUserIDStr string, req TransferRequest) (st
 
 	// 4. Pastikan wallet pengirim dan penerima ada (repo akan handle create jika belum ada)
 	_, err = s.repo.FindOrCreateWalletByUserID(senderUserID)
-	if err != nil { return "", fmt.Errorf("gagal memeriksa wallet pengirim: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("gagal memeriksa wallet pengirim: %w", err)
+	}
 	_, err = s.repo.FindOrCreateWalletByUserID(recipientUserID)
-	if err != nil { return "", fmt.Errorf("gagal memeriksa/membuat wallet penerima: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("gagal memeriksa/membuat wallet penerima: %w", err)
+	}
 
 	// 5. Eksekusi Transaksi Database (kurangi poin pengirim, tambah poin penerima, catat riwayat)
 	orderID, err := s.repo.ExecuteTransferTransaction(senderUserID, recipientUserID, req.Amount, req.RecipientEmail)
@@ -569,27 +573,27 @@ func (s *Service) TransferXpoin(senderUserIDStr string, req TransferRequest) (st
 		notifTitle := "Transfer Berhasil"
 		notifBody := fmt.Sprintf("Kamu berhasil mentransfer %d Xpoin ke %s.", req.Amount, req.RecipientEmail)
 		errNotif := s.notifService.SendNotification(senderUserID, notifTitle, notifBody, "TRANSFER_SENT_SUCCESS")
-        if errNotif != nil {
-            log.Printf("Gagal mengirim notifikasi transfer (sent) ke user %d: %v", senderUserID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi transfer (sent) ke user %d: %v", senderUserID, errNotif)
+		}
 	}()
 
 	// Notifikasi untuk Penerima
 	go func(senderID int, recipientID int, amount int) {
-        // Ambil data pengirim untuk notifikasi
+		// Ambil data pengirim untuk notifikasi
 		senderData, err := s.repo.FindByID(senderID) // Panggil repo untuk data pengirim
 		if err != nil || senderData == nil {
 			log.Printf("Gagal menemukan data pengirim (ID: %d) untuk notifikasi transfer: %v", senderID, err)
 			return // Gagal mengirim notif jika pengirim tidak ditemukan
 		}
-        senderIdentifier := senderData.Fullname // Gunakan nama lengkap pengirim
+		senderIdentifier := senderData.Fullname // Gunakan nama lengkap pengirim
 
 		notifTitle := "Xpoin Diterima"
 		notifBody := fmt.Sprintf("Kamu menerima %d Xpoin dari %s.", amount, senderIdentifier)
 		errNotif := s.notifService.SendNotification(recipientID, notifTitle, notifBody, "TRANSFER_RECEIVED_SUCCESS")
-        if errNotif != nil {
-            log.Printf("Gagal mengirim notifikasi transfer (received) ke user %d: %v", recipientID, errNotif)
-        }
+		if errNotif != nil {
+			log.Printf("Gagal mengirim notifikasi transfer (received) ke user %d: %v", recipientID, errNotif)
+		}
 	}(senderUserID, recipientUserID, req.Amount)
 
 	return orderID, nil // Kembalikan Order ID jika sukses
@@ -598,7 +602,10 @@ func (s *Service) TransferXpoin(senderUserIDStr string, req TransferRequest) (st
 // --- Conversion Service Methods ---
 
 func (s *Service) ConvertXpToRp(userIDStr string, req ConversionRequest) (*UserWallet, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil { return nil, errors.New("ID pengguna tidak valid") }
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		return nil, errors.New("ID pengguna tidak valid")
+	}
 
 	amountXp := int(req.Amount) // Jumlah XP harus integer
 	if float64(amountXp) != req.Amount || amountXp <= 0 {
@@ -610,14 +617,18 @@ func (s *Service) ConvertXpToRp(userIDStr string, req ConversionRequest) (*UserW
 
 	// Pastikan wallet ada
 	_, err = s.repo.FindOrCreateWalletByUserID(userID)
-	if err != nil { return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err)
+	}
 
 	// Eksekusi transaksi: kurangi Xp (-amountXp), tambah Rp (+amountRp)
 	updatedWallet, err := s.repo.ExecuteConversionTransaction(
 		userID, -amountXp, amountRp,
 		"xp_to_rp", amountXp, amountRp, conversionRateXpToRp,
 	)
-	if err != nil { return nil, err } // Error sudah ditangani repo (misal: xpoin tidak cukup)
+	if err != nil {
+		return nil, err
+	} // Error sudah ditangani repo (misal: xpoin tidak cukup)
 
 	go func() {
 		notifTitle := "Konversi Berhasil"
@@ -629,7 +640,10 @@ func (s *Service) ConvertXpToRp(userIDStr string, req ConversionRequest) (*UserW
 }
 
 func (s *Service) ConvertRpToXp(userIDStr string, req ConversionRequest) (*UserWallet, error) {
-	userID, err := strconv.Atoi(userIDStr); if err != nil { return nil, errors.New("ID pengguna tidak valid") }
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		return nil, errors.New("ID pengguna tidak valid")
+	}
 
 	amountRp := req.Amount
 	if amountRp <= 0 {
@@ -641,22 +655,25 @@ func (s *Service) ConvertRpToXp(userIDStr string, req ConversionRequest) (*UserW
 	if amountXp <= 0 {
 		return nil, errors.New("jumlah Rupiah terlalu kecil untuk dikonversi menjadi Xpoin")
 	}
-	
+
 	// Hitung ulang amountRp yang benar-benar digunakan berdasarkan Xp yang didapat
 	// agar balance berkurang dengan jumlah yang pas
 	actualAmountRpUsed := float64(amountXp) * conversionRateXpToRp
 
-
 	// Pastikan wallet ada
 	_, err = s.repo.FindOrCreateWalletByUserID(userID)
-	if err != nil { return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("gagal memeriksa/membuat wallet: %w", err)
+	}
 
 	// Eksekusi transaksi: tambah Xp (+amountXp), kurangi Rp (-actualAmountRpUsed)
 	updatedWallet, err := s.repo.ExecuteConversionTransaction(
 		userID, amountXp, -actualAmountRpUsed,
 		"rp_to_xp", amountXp, actualAmountRpUsed, conversionRateXpToRp,
 	)
-	if err != nil { return nil, err } // Error sudah ditangani repo (misal: saldo tidak cukup)
+	if err != nil {
+		return nil, err
+	} // Error sudah ditangani repo (misal: saldo tidak cukup)
 
 	go func() {
 		notifTitle := "Konversi Berhasil"
@@ -681,17 +698,21 @@ func (s *Service) GenerateDepositQrToken(userIDStr string) (string, time.Time, e
 // UpdateProfile memproses update data profil user
 func (s *Service) UpdateProfile(userIDStr string, req UpdateUserProfileRequest) error {
 	userID, err := strconv.Atoi(userIDStr)
-	if err != nil { return errors.New("ID pengguna tidak valid") }
+	if err != nil {
+		return errors.New("ID pengguna tidak valid")
+	}
 
 	// Cek apakah ada data yang diupdate
 	if req.Fullname == "" && req.Email == "" && req.Phone == "" {
-		 return errors.New("tidak ada data untuk diupdate")
+		return errors.New("tidak ada data untuk diupdate")
 	}
-    // TODO: Tambahkan validasi format email jika perlu
+	// TODO: Tambahkan validasi format email jika perlu
 
 	err = s.repo.UpdateUserProfile(userID, &req)
 	if err != nil {
-		if err == sql.ErrNoRows { return errors.New("pengguna tidak ditemukan") }
+		if err == sql.ErrNoRows {
+			return errors.New("pengguna tidak ditemukan")
+		}
 		return err // Termasuk error email/phone duplikat dari repo
 	}
 	return nil
@@ -812,7 +833,7 @@ func (s *Service) AuthenticateWithGoogle(idToken string) (string, *User, error) 
 		Fullname: fullname,
 		Email:    email,
 		Phone:    nil, // Phone tidak didapat dari Google
-		Password: "", // Repo akan handle ini (set ke "google_oauth_user")
+		Password: "",  // Repo akan handle ini (set ke "google_oauth_user")
 		Photo:    stringToPtr(photoURL),
 	}
 

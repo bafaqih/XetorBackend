@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"xetor.id/backend/internal/auth"
 )
 
@@ -69,7 +71,9 @@ func (h *Handler) SignIn(c *gin.Context) {
 	// Panggil service untuk validasi dan dapatkan data user
 	user, err := h.service.ValidateLogin(req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": strings.Title(err.Error())})
+		// Use golang.org/x/text/cases instead of deprecated strings.Title
+		caser := cases.Title(language.English)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": caser.String(err.Error())})
 		return
 	}
 

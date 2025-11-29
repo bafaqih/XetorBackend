@@ -12,6 +12,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/midtrans/midtrans-go v1.3.8
 	golang.org/x/crypto v0.43.0
+	golang.org/x/text v0.30.0
 	google.golang.org/api v0.254.0
 )
 
@@ -82,7 +83,6 @@ require (
 	golang.org/x/oauth2 v0.32.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.37.0 // indirect
 	google.golang.org/appengine/v2 v2.0.6 // indirect

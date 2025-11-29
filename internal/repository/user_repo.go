@@ -714,6 +714,25 @@ func (r *UserRepository) GetAllActivePromotionBanners() ([]user.PromotionBanner,
 
 // --- Top Up Process Functions ---
 
+// GenerateTopupOrderID generate orderID menggunakan sequence tanpa create record
+// Format: TP-{id} dimana id adalah nextval dari sequence
+func (r *UserRepository) GenerateTopupOrderID() (string, error) {
+	// Get next value dari sequence user_topup_histories_id_seq
+	// Note: Ini akan "membakar" ID meskipun record belum dibuat
+	// Tapi ini diperlukan untuk maintain format TP-{id}
+	query := `SELECT nextval('user_topup_histories_id_seq')`
+	var topupID int
+	err := r.db.QueryRow(query).Scan(&topupID)
+	if err != nil {
+		log.Printf("Error generating topup order ID: %v", err)
+		return "", errors.New("gagal membuat order ID")
+	}
+	
+	orderID := fmt.Sprintf("TP-%d", topupID)
+	log.Printf("Generated topup order ID: %s (record will be created on webhook pending)", orderID)
+	return orderID, nil
+}
+
 // CreateTopupTransaction mencatat riwayat top up dengan status Pending (TIDAK menambah saldo)
 // Saldo akan ditambahkan setelah webhook Midtrans mengkonfirmasi pembayaran berhasil
 func (r *UserRepository) CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error) {
@@ -745,9 +764,9 @@ func (r *UserRepository) CreateTopupTransaction(userID int, amount float64, paym
 // UpdateTopupStatus memperbarui status topup berdasarkan orderID dan menambah saldo jika status Completed
 // Jika record belum ada (webhook pending pertama kali), akan create record dulu
 func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error {
-	// Parse orderID: Format baru TP-{userID}-{timestamp}-{random}
+	// Parse orderID: Format TP-{id}
 	parts := strings.Split(orderID, "-")
-	if len(parts) < 2 || parts[0] != "TP" {
+	if len(parts) != 2 || parts[0] != "TP" {
 		log.Printf("Invalid topup order ID format for status update: %s", orderID)
 		return nil // Return nil agar Midtrans tidak retry
 	}
@@ -758,26 +777,12 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 	var recordExists bool
 	// amount dan paymentMethodID sudah diterima sebagai parameter
 	
-	// Cek format orderID: lama (TP-{id}) atau baru (TP-{userID}-{timestamp}-{random})
-	if len(parts) == 2 {
-		// Format lama: TP-{id}
-		var err error
-		topupID, err = strconv.Atoi(parts[1])
-		if err != nil {
-			log.Printf("Error converting topup ID from order ID %s: %v", orderID, err)
-			return nil
-		}
-		recordExists = true
-	} else {
-		// Format baru: TP-{userID}-{timestamp}-{random}
-		// Extract userID dari orderID
-		var err error
-		userID, err = strconv.Atoi(parts[1])
-		if err != nil {
-			log.Printf("Error extracting user ID from order ID %s: %v", orderID, err)
-			return nil
-		}
-		recordExists = false
+	// Parse topupID dari orderID (format: TP-{id})
+	var err error
+	topupID, err = strconv.Atoi(parts[1])
+	if err != nil {
+		log.Printf("Error converting topup ID from order ID %s: %v", orderID, err)
+		return nil
 	}
 
 	// Mulai transaksi database
@@ -800,7 +805,23 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 		}
 	}()
 
-	// 1. Handle record yang belum ada (format baru: webhook pending pertama kali)
+	// Cek apakah record sudah ada (dalam transaction untuk avoid race condition)
+	queryCheckExists := `SELECT user_id, status FROM user_topup_histories WHERE id = $1`
+	err = tx.QueryRow(queryCheckExists, topupID).Scan(&userID, &currentStatus)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Record belum ada, akan dibuat saat webhook pending
+			recordExists = false
+			log.Printf("Record not found for Order ID: %s (Topup ID: %d). Will be created on webhook pending.", orderID, topupID)
+		} else {
+			log.Printf("Error checking topup record existence for ID %d: %v", topupID, err)
+			return err
+		}
+	} else {
+		recordExists = true
+	}
+
+	// 1. Handle record yang belum ada (webhook pending pertama kali)
 	if !recordExists {
 		// Create record baru saat webhook pending pertama kali (user sudah pilih payment method)
 		if newStatus == "Pending" {
@@ -811,17 +832,33 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 				return fmt.Errorf("gagal memastikan wallet ada: %w", err)
 			}
 			
-			// Create record dengan status Pending
+			// Create record dengan ID yang sudah di-generate (dari orderID)
+			// Format orderID: TP-{id}, jadi topupID sudah di-parse sebelumnya
 			queryInsertHistory := `
-				INSERT INTO user_topup_histories (user_id, payment_method_id, amount, status, topup_time)
-				VALUES ($1, $2, $3, 'Pending', NOW())
+				INSERT INTO user_topup_histories (id, user_id, payment_method_id, amount, status, topup_time)
+				VALUES ($1, $2, $3, $4, 'Pending', NOW())
 				RETURNING id`
 			
 			var newTopupID int
-			err = tx.QueryRow(queryInsertHistory, userID, paymentMethodID, amount).Scan(&newTopupID)
+			err = tx.QueryRow(queryInsertHistory, topupID, userID, paymentMethodID, amount).Scan(&newTopupID)
 			if err != nil {
-				log.Printf("Error creating topup history for Order ID %s: %v", orderID, err)
-				return fmt.Errorf("gagal mencatat riwayat top up: %w", err)
+				// Jika ID sudah digunakan (seharusnya tidak terjadi), coba create tanpa specify ID
+				if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+					log.Printf("ID %d already exists, creating with auto-increment for Order ID %s", topupID, orderID)
+					queryInsertHistoryAuto := `
+						INSERT INTO user_topup_histories (user_id, payment_method_id, amount, status, topup_time)
+						VALUES ($1, $2, $3, 'Pending', NOW())
+						RETURNING id`
+					err = tx.QueryRow(queryInsertHistoryAuto, userID, paymentMethodID, amount).Scan(&newTopupID)
+					if err != nil {
+						log.Printf("Error creating topup history with auto-increment for Order ID %s: %v", orderID, err)
+						return fmt.Errorf("gagal mencatat riwayat top up: %w", err)
+					}
+					log.Printf("Warning: Order ID %s doesn't match created record ID %d", orderID, newTopupID)
+				} else {
+					log.Printf("Error creating topup history for Order ID %s: %v", orderID, err)
+					return fmt.Errorf("gagal mencatat riwayat top up: %w", err)
+				}
 			}
 			
 			log.Printf("Topup record created for Order ID: %s, Topup ID: %d, User ID: %d, Amount: %.2f", orderID, newTopupID, userID, amount)
@@ -830,13 +867,13 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 			topupID = newTopupID
 			currentStatus = "Pending"
 		} else {
-			// Jika bukan pending, berarti ini webhook settlement/failed
+			// Jika bukan pending (settlement/failed), berarti record sudah dibuat saat pending
 			// Tapi record belum ada, ini tidak normal. Log dan return
-			log.Printf("Warning: Received %s status for Order ID %s but record doesn't exist yet. This shouldn't happen.", newStatus, orderID)
-			return nil
+			log.Printf("Warning: Received %s status for Order ID %s but record doesn't exist yet. Pending webhook may not have arrived yet.", newStatus, orderID)
+			return nil // Return nil, mungkin pending webhook belum datang
 		}
 	} else {
-		// 2. Handle record yang sudah ada (format lama atau record sudah dibuat)
+		// 2. Handle record yang sudah ada (format lama: TP-{id})
 		// Ambil data topup untuk mendapatkan user_id dan amount
 		queryGetTopup := `SELECT user_id, amount, status FROM user_topup_histories WHERE id = $1`
 		err = tx.QueryRow(queryGetTopup, topupID).Scan(&userID, &amount, &currentStatus)
