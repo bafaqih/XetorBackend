@@ -32,12 +32,19 @@ func NewMidtransService(repo TransactionRepository) *MidtransService {
 // ProcessNotification memvalidasi dan memproses notifikasi webhook
 func (s *MidtransService) ProcessNotification(notification MidtransTransactionNotification) error {
 	// 1. Validasi Signature Key
-	err := s.validateSignature(notification)
-	if err != nil {
-		log.Printf("Midtrans webhook signature validation failed: %v", err)
-		return err // Kembalikan error jika signature tidak valid
+	// Skip validation untuk testing jika env variable di-set
+	skipValidation := os.Getenv("SKIP_SIGNATURE_VALIDATION") == "true"
+	if !skipValidation {
+		err := s.validateSignature(notification)
+		if err != nil {
+			log.Printf("Midtrans webhook signature validation failed: %v", err)
+			log.Printf("To skip validation for testing, set SKIP_SIGNATURE_VALIDATION=true in .env")
+			return err // Kembalikan error jika signature tidak valid
+		}
+		log.Println("Midtrans webhook signature validated successfully.")
+	} else {
+		log.Println("WARNING: Signature validation skipped for testing!")
 	}
-	log.Println("Midtrans webhook signature validated successfully.")
 
 	// 2. Proses Status Transaksi (Contoh untuk Withdraw & Topup)
 	// Kita perlu cara untuk membedakan jenis transaksi dari order_id
