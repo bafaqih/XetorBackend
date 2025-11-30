@@ -416,6 +416,54 @@ func (r *UserRepository) GetTransferHistoryForUser(userID int) ([]user.Transacti
 	return items, nil
 }
 
+// GetConversionHistoryForUser mengambil riwayat konversi
+func (r *UserRepository) GetConversionHistoryForUser(userID int) ([]user.TransactionHistoryItem, error) {
+	query := `
+		SELECT id, type, amount_xp, amount_rp, conversion_time
+		FROM user_conversion_histories
+		WHERE user_id = $1
+		ORDER BY conversion_time DESC`
+	rows, err := r.db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []user.TransactionHistoryItem
+	for rows.Next() {
+		var item user.TransactionHistoryItem
+		var id, amountXp int
+		var amountRp float64
+		var conversionType string
+		item.Type = "convert"
+
+		if err := rows.Scan(&id, &conversionType, &amountXp, &amountRp, &item.Timestamp); err != nil {
+			return nil, err
+		}
+		// Format ID: CV diikuti 5 digit angka
+		item.ID = fmt.Sprintf("CV%05d", id)
+		// Status selalu Completed untuk conversion
+		item.Status = "Completed"
+		// Set amount (rupiah) dan points (xpoin)
+		item.Amount = sql.NullString{String: fmt.Sprintf("%.2f", amountRp), Valid: true}
+		item.Points = sql.NullInt32{Int32: int32(amountXp), Valid: true}
+		// Set conversion_type untuk memudahkan frontend
+		item.ConversionType = conversionType
+		
+		// Buat deskripsi berdasarkan tipe konversi
+		if conversionType == "xp_to_rp" {
+			item.Description = fmt.Sprintf("Konversi %d Xp ke Rp %.2f", amountXp, amountRp)
+		} else if conversionType == "rp_to_xp" {
+			item.Description = fmt.Sprintf("Konversi Rp %.2f ke %d Xp", amountRp, amountXp)
+		} else {
+			item.Description = "Konversi" // Fallback
+		}
+
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 // DeleteUserByID menghapus user berdasarkan ID
 func (r *UserRepository) DeleteUserByID(id int) error {
 	query := "DELETE FROM users WHERE id = $1"

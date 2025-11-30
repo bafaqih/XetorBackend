@@ -65,6 +65,7 @@ type Repository interface {
 	GetWithdrawHistoryForUser(userID int) ([]TransactionHistoryItem, error)
 	GetTopupHistoryForUser(userID int) ([]TransactionHistoryItem, error)
 	GetTransferHistoryForUser(userID int) ([]TransactionHistoryItem, error)
+	GetConversionHistoryForUser(userID int) ([]TransactionHistoryItem, error)
 
 	// Withdraw methods
 	GetCurrentBalanceByUserID(userID int) (float64, error)
@@ -306,6 +307,12 @@ func (s *Service) GetTransactionHistory(userIDStr string) ([]TransactionHistoryI
 		log.Printf("Error getting transfer history: %v", err) /* Lanjutkan saja */
 	}
 	allTransactions = append(allTransactions, transferHistory...)
+
+	conversionHistory, err := s.repo.GetConversionHistoryForUser(userID)
+	if err != nil {
+		log.Printf("Error getting conversion history: %v", err) /* Lanjutkan saja */
+	}
+	allTransactions = append(allTransactions, conversionHistory...)
 
 	// Urutkan semua transaksi berdasarkan waktu (terbaru dulu)
 	sort.SliceStable(allTransactions, func(i, j int) bool {

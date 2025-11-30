@@ -68,13 +68,14 @@ type UpdateUserAddressRequest struct {
 
 // TransactionHistoryItem adalah format standar untuk riwayat transaksi gabungan
 type TransactionHistoryItem struct {
-	ID          string         `json:"id"`               // ID unik (misal: "deposit-1", "withdraw-5")
-	Type        string         `json:"type"`             // 'deposit', 'withdraw', 'topup', 'transfer'
-	Amount      sql.NullString `json:"amount,omitempty"` // Jumlah (Rp) untuk withdraw, topup, transfer
-	Points      sql.NullInt32  `json:"points,omitempty"` // Jumlah poin untuk deposit
-	Status      string         `json:"status"`
-	Timestamp   time.Time      `json:"timestamp"`
-	Description string         `json:"description"` // Deskripsi singkat (misal: "Withdraw ke BCA", "Topup via GoPay", "Transfer ke email@...", "Deposit Sampah")
+	ID             string         `json:"id"`               // ID unik (misal: "deposit-1", "withdraw-5")
+	Type           string         `json:"type"`             // 'deposit', 'withdraw', 'topup', 'transfer', 'convert'
+	Amount         sql.NullString `json:"amount,omitempty"` // Jumlah (Rp) untuk withdraw, topup, transfer
+	Points         sql.NullInt32  `json:"points,omitempty"` // Jumlah poin untuk deposit
+	Status         string         `json:"status"`
+	Timestamp      time.Time      `json:"timestamp"`
+	Description    string         `json:"description"` // Deskripsi singkat (misal: "Withdraw ke BCA", "Topup via GoPay", "Transfer ke email@...", "Deposit Sampah")
+	ConversionType string         `json:"conversion_type,omitempty"` // Hanya untuk type="convert": "xp_to_rp" atau "rp_to_xp"
 }
 
 // UserWallet merepresentasikan data dari tabel user_wallets
