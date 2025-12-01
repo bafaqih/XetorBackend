@@ -80,8 +80,8 @@ type Repository interface {
 
 	// Topup methods
 	CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error)
-	CreateTopupTransactionInitialized(userID int, amount float64, paymentMethodID int) (string, error) // Create dengan status "Initialized"
-	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error
+	CreateTopupTransactionInitialized(userID int, amount float64, paymentMethodID int) (string, error)                          // Create dengan status "Initialized"
+	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) (int, error) // Return userID juga
 
 	// Transfer methods
 	FindUserIDByEmail(email string) (int, error)
