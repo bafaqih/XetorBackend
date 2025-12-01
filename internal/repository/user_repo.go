@@ -822,12 +822,13 @@ func (r *UserRepository) CreateTopupTransaction(userID int, amount float64, paym
 
 // UpdateTopupStatus memperbarui status topup berdasarkan orderID dan menambah saldo jika status Completed
 // Jika record belum ada (webhook pending pertama kali), akan create record dulu
-func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error {
+// Return userID untuk keperluan notifikasi
+func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) (int, error) {
 	// Parse orderID: Format TP-{id}
 	parts := strings.Split(orderID, "-")
 	if len(parts) != 2 || parts[0] != "TP" {
 		log.Printf("Invalid topup order ID format for status update: %s", orderID)
-		return nil // Return nil agar Midtrans tidak retry
+		return 0, nil // Return 0 userID dan nil error agar Midtrans tidak retry
 	}
 	
 	var topupID int
@@ -840,14 +841,14 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 	topupID, err = strconv.Atoi(parts[1])
 	if err != nil {
 		log.Printf("Error converting topup ID from order ID %s: %v", orderID, err)
-		return nil
+		return 0, nil
 	}
 
 	// Mulai transaksi database
 	tx, err := r.db.Begin()
 	if err != nil {
 		log.Printf("Error starting transaction for updating topup status: %v", err)
-		return err
+		return 0, err
 	}
 	defer func() {
 		if p := recover(); p != nil {
@@ -869,10 +870,10 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("Topup record not found for Order ID: %s (Topup ID: %d). This should not happen.", orderID, topupID)
-			return fmt.Errorf("record topup tidak ditemukan untuk order ID: %s", orderID)
+			return 0, fmt.Errorf("record topup tidak ditemukan untuk order ID: %s", orderID)
 		}
 		log.Printf("Error checking topup record existence for ID %d: %v", topupID, err)
-		return err
+		return 0, err
 	}
 	
 	// Handle update status berdasarkan current status
@@ -884,12 +885,12 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 			result, err := tx.Exec(queryUpdateStatus, newStatus, topupID)
 			if err != nil {
 				log.Printf("Error updating topup status from Initialized to Pending for ID %d: %v", topupID, err)
-				return err
+				return 0, err
 			}
 			rowsAffected, _ := result.RowsAffected()
 			if rowsAffected == 0 {
 				log.Printf("No Initialized topup found or already updated for ID %d (Order ID: %s)", topupID, orderID)
-				return nil
+				return userID, nil
 			}
 			log.Printf("Topup status updated from Initialized to Pending for Order ID: %s", orderID)
 			currentStatus = "Pending"
@@ -899,12 +900,12 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 			result, err := tx.Exec(queryUpdateStatus, newStatus, topupID)
 			if err != nil {
 				log.Printf("Error updating topup status from Initialized to %s for ID %d: %v", newStatus, topupID, err)
-				return err
+				return 0, err
 			}
 			rowsAffected, _ := result.RowsAffected()
 			if rowsAffected == 0 {
 				log.Printf("No Initialized topup found or already updated for ID %d (Order ID: %s)", topupID, orderID)
-				return nil
+				return userID, nil
 			}
 			log.Printf("Topup status updated from Initialized to %s for Order ID: %s", newStatus, orderID)
 			currentStatus = newStatus
@@ -914,26 +915,26 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 		if newStatus == "Pending" {
 			// Duplicate pending webhook, ignore
 			log.Printf("Duplicate pending webhook for Order ID: %s", orderID)
-			return nil
+			return userID, nil
 		}
 		
 		queryUpdateStatus := `UPDATE user_topup_histories SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'Pending'`
 		result, err := tx.Exec(queryUpdateStatus, newStatus, topupID)
 		if err != nil {
 			log.Printf("Error updating topup status from Pending to %s for ID %d: %v", newStatus, topupID, err)
-			return err
+			return 0, err
 		}
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
 			log.Printf("No Pending topup found or already updated for ID %d (Order ID: %s)", topupID, orderID)
-			return nil
+			return userID, nil
 		}
 		log.Printf("Topup status updated from Pending to %s for Order ID: %s", newStatus, orderID)
 		currentStatus = newStatus
 	} else {
 		// Status sudah Completed/Failed, ignore duplicate webhook
 		log.Printf("Topup ID %d (Order ID: %s) already processed with status: %s", topupID, orderID, currentStatus)
-		return nil
+		return userID, nil
 	}
 
 	// 3. Jika status Completed, tambahkan saldo ke wallet
@@ -948,13 +949,13 @@ func (r *UserRepository) UpdateTopupStatus(orderID string, newStatus string, tra
 		err = tx.QueryRow(queryUpdateWallet, amount, userID).Scan(&currentBalance)
 		if err != nil {
 			log.Printf("Error updating wallet balance during topup completion for user ID %d: %v", userID, err)
-			return errors.New("gagal mengupdate saldo")
+			return 0, errors.New("gagal mengupdate saldo")
 		}
 		log.Printf("Balance added successfully for user ID %d. New balance: %.2f", userID, currentBalance)
 	}
 
 	log.Printf("Topup status updated successfully for ID: %d (Order ID: %s) to %s", topupID, orderID, newStatus)
-	return nil
+	return userID, nil
 }
 
 // --- Transfer Xpoin Functions ---

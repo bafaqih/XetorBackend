@@ -35,7 +35,7 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	
 	// Komponen Midtrans (dibuat dulu karena UserService butuh ini)
-	midtransService := midtrans.NewMidtransService(userRepo)
+	midtransService := midtrans.NewMidtransService(userRepo, notifService)
 	midtransHandler := midtrans.NewMidtransHandler(midtransService)
 	
 	// UserService sekarang butuh MidtransService

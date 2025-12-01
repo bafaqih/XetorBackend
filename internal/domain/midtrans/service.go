@@ -14,20 +14,25 @@ import (
 	"github.com/midtrans/midtrans-go"
 	"github.com/midtrans/midtrans-go/snap"
 	"xetor.id/backend/internal/config"
+	"xetor.id/backend/internal/notification"
 )
 
 // Definisikan interface agar service bergantung pada abstraksi, bukan implementasi
 type TransactionRepository interface {
 	UpdateWithdrawStatus(orderID string, newStatus string, transactionID string) error
-	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) error
+	UpdateTopupStatus(orderID string, newStatus string, transactionID string, amount float64, paymentMethodID int) (int, error) // Return userID juga
 }
 
 type MidtransService struct {
-	repo TransactionRepository // Gunakan interface
+	repo          TransactionRepository // Gunakan interface
+	notifService  *notification.NotificationService
 }
 
-func NewMidtransService(repo TransactionRepository) *MidtransService {
-	return &MidtransService{repo: repo}
+func NewMidtransService(repo TransactionRepository, notifService *notification.NotificationService) *MidtransService {
+	return &MidtransService{
+		repo:         repo,
+		notifService: notifService,
+	}
 }
 
 // ProcessNotification memvalidasi dan memproses notifikasi webhook
@@ -96,7 +101,21 @@ func (s *MidtransService) ProcessNotification(notification MidtransTransactionNo
 		// Payment method ID default ke 1 (Gopay) karena Android hardcode ke 1
 		// TODO: Bisa diambil dari payment_type jika perlu mapping
 		paymentMethodID := 1
-		updateErr = s.repo.UpdateTopupStatus(notification.OrderID, finalStatus, notification.TransactionID, amount, paymentMethodID)
+		userID, updateErr := s.repo.UpdateTopupStatus(notification.OrderID, finalStatus, notification.TransactionID, amount, paymentMethodID)
+		
+		// Kirim notifikasi jika topup berhasil (status Completed)
+		if updateErr == nil && finalStatus == "Completed" && userID > 0 {
+			go func(uid int, amt float64) {
+				notifTitle := "Top Up Berhasil"
+				notifBody := fmt.Sprintf("Top up saldo sebesar Rp %.0f berhasil ditambahkan ke akun Anda.", amt)
+				errNotif := s.notifService.SendNotification(uid, notifTitle, notifBody, "TOPUP_SUCCESS")
+				if errNotif != nil {
+					log.Printf("Gagal mengirim notifikasi topup ke user %d: %v", uid, errNotif)
+				} else {
+					log.Printf("Notifikasi topup berhasil dikirim ke user %d", uid)
+				}
+			}(userID, amount)
+		}
 	default:
 		log.Printf("Unknown transaction type prefix in Order ID: %s", transactionTypePrefix)
 		updateErr = errors.New("prefix Order ID tidak dikenali")
