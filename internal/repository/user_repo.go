@@ -279,10 +279,18 @@ func (r *UserRepository) DeleteAddress(id int, userID int) error {
 // GetDepositHistoryForUser mengambil riwayat deposit
 func (r *UserRepository) GetDepositHistoryForUser(userID int) ([]user.TransactionHistoryItem, error) {
 	query := `
-		SELECT id, total_points, status, deposit_time
-		FROM user_deposit_histories
-		WHERE user_id = $1
-		ORDER BY deposit_time DESC`
+		SELECT 
+			udh.id, 
+			udh.total_points, 
+			udh.status, 
+			udh.deposit_time,
+			p.id as partner_id,
+			p.business_name as partner_name,
+			p.photo as partner_photo
+		FROM user_deposit_histories udh
+		LEFT JOIN partners p ON udh.partner_id = p.id
+		WHERE udh.user_id = $1
+		ORDER BY udh.deposit_time DESC`
 	rows, err := r.db.Query(query, userID)
 	if err != nil {
 		return nil, err
@@ -294,15 +302,35 @@ func (r *UserRepository) GetDepositHistoryForUser(userID int) ([]user.Transactio
 		var item user.TransactionHistoryItem
 		var id int
 		var points int
+		var partnerID sql.NullInt32
+		var partnerName sql.NullString
+		var partnerPhoto sql.NullString
+		
 		item.Type = "deposit"
-		item.Description = "Deposit Sampah"
 
-		if err := rows.Scan(&id, &points, &item.Status, &item.Timestamp); err != nil {
+		if err := rows.Scan(&id, &points, &item.Status, &item.Timestamp, &partnerID, &partnerName, &partnerPhoto); err != nil {
 			return nil, err
 		}
 		// --- PERUBAHAN FORMAT ID ---
 		item.ID = fmt.Sprintf("DP%05d", id) // Format: DP diikuti 5 digit angka (padding 0)
 		item.Points = sql.NullInt32{Int32: int32(points), Valid: true}
+		
+		// Set description dengan nama partner jika ada
+		if partnerName.Valid && partnerName.String != "" {
+			item.Description = "Deposit ke " + partnerName.String
+		} else {
+			item.Description = "Deposit Sampah"
+		}
+		
+		// Set partner info jika ada
+		if partnerID.Valid {
+			item.Partner = &user.PartnerInfo{
+				ID:    partnerID,
+				Name:  partnerName,
+				Photo: partnerPhoto,
+			}
+		}
+		
 		items = append(items, item)
 	}
 	return items, nil

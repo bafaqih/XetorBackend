@@ -66,6 +66,13 @@ type UpdateUserAddressRequest struct {
 	PostalCode  string `json:"postal_code"`
 }
 
+// PartnerInfo adalah informasi partner untuk deposit history (optional, hanya untuk type="deposit")
+type PartnerInfo struct {
+	ID    sql.NullInt32  `json:"id,omitempty"`    // Partner ID
+	Name  sql.NullString `json:"name,omitempty"`  // Nama partner (business_name)
+	Photo sql.NullString `json:"photo,omitempty"` // Photo profile partner
+}
+
 // TransactionHistoryItem adalah format standar untuk riwayat transaksi gabungan
 type TransactionHistoryItem struct {
 	ID             string         `json:"id"`               // ID unik (misal: "deposit-1", "withdraw-5")
@@ -76,6 +83,7 @@ type TransactionHistoryItem struct {
 	Timestamp      time.Time      `json:"timestamp"`
 	Description    string         `json:"description"` // Deskripsi singkat (misal: "Withdraw ke BCA", "Topup via GoPay", "Transfer ke email@...", "Deposit Sampah")
 	ConversionType string         `json:"conversion_type,omitempty"` // Hanya untuk type="convert": "xp_to_rp" atau "rp_to_xp"
+	Partner        *PartnerInfo   `json:"partner,omitempty"` // Informasi partner (hanya untuk type="deposit")
 }
 
 // UserWallet merepresentasikan data dari tabel user_wallets
