@@ -358,6 +358,17 @@ func (h *Handler) GetActivePromotionBanners(c *gin.Context) {
 	c.JSON(http.StatusOK, banners)
 }
 
+// GetApprovedPartners menangani request untuk mengambil daftar mitra yang approved (public endpoint)
+func (h *Handler) GetApprovedPartners(c *gin.Context) {
+	partners, err := h.service.GetAllApprovedPartners()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil daftar mitra"})
+		return
+	}
+
+	c.JSON(http.StatusOK, partners)
+}
+
 // --- User Withdraw Handler ---
 
 // RequestWithdrawal menangani request penarikan saldo

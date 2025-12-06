@@ -204,3 +204,16 @@ type PromotionBanner struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// PublicPartnerResponse untuk response public endpoint /public/partners
+type PublicPartnerResponse struct {
+	ID          int            `json:"id"`           // Partner ID
+	BusinessName string         `json:"business_name"`
+	Photo        sql.NullString `json:"photo,omitempty"`
+	Address      sql.NullString `json:"address,omitempty"`
+	CityRegency  sql.NullString `json:"city_regency,omitempty"`
+	Province     sql.NullString `json:"province,omitempty"`
+	PostalCode   sql.NullString `json:"postal_code,omitempty"`
+	Latitude     sql.NullFloat64 `json:"latitude,omitempty"`
+	Longitude    sql.NullFloat64 `json:"longitude,omitempty"`
+}

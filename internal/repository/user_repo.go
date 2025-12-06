@@ -789,6 +789,81 @@ func (r *UserRepository) GetAllActivePromotionBanners() ([]user.PromotionBanner,
 	return banners, nil
 }
 
+// GetAllApprovedPartners mengambil semua mitra yang statusnya "Approved" beserta alamat dan koordinat
+func (r *UserRepository) GetAllApprovedPartners() ([]user.PublicPartnerResponse, error) {
+	query := `
+		SELECT 
+			p.id,
+			p.business_name,
+			p.photo,
+			pa.address,
+			pa.city_regency,
+			pa.province,
+			pa.postal_code,
+			pa.latitude,
+			pa.longitude
+		FROM partners p
+		INNER JOIN xetor_partners xp ON p.id = xp.partner_id
+		LEFT JOIN partner_addresses pa ON p.id = pa.partner_id
+		WHERE xp.status = 'Approved'
+		ORDER BY p.business_name ASC
+	`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		log.Printf("Error getting approved partners: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var partners []user.PublicPartnerResponse
+	for rows.Next() {
+		var partner user.PublicPartnerResponse
+		var photo, address, cityRegency, province, postalCode sql.NullString
+		var latitude, longitude sql.NullFloat64
+
+		if err := rows.Scan(
+			&partner.ID,
+			&partner.BusinessName,
+			&photo,
+			&address,
+			&cityRegency,
+			&province,
+			&postalCode,
+			&latitude,
+			&longitude,
+		); err != nil {
+			log.Printf("Error scanning approved partner row: %v", err)
+			return nil, err
+		}
+
+		// Set nullable fields
+		if photo.Valid {
+			partner.Photo = photo
+		}
+		if address.Valid {
+			partner.Address = address
+		}
+		if cityRegency.Valid {
+			partner.CityRegency = cityRegency
+		}
+		if province.Valid {
+			partner.Province = province
+		}
+		if postalCode.Valid {
+			partner.PostalCode = postalCode
+		}
+		if latitude.Valid {
+			partner.Latitude = latitude
+		}
+		if longitude.Valid {
+			partner.Longitude = longitude
+		}
+
+		partners = append(partners, partner)
+	}
+	return partners, nil
+}
+
 // --- Top Up Process Functions ---
 
 // CreateTopupTransactionInitialized mencatat riwayat top up dengan status "Initialized"

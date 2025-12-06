@@ -35,6 +35,7 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 	{
 		publicRoutes.GET("/payment-methods", userHandler.GetActivePaymentMethods)
 		publicRoutes.GET("/promotion-banners", userHandler.GetActivePromotionBanners)
+		publicRoutes.GET("/partners", userHandler.GetApprovedPartners) // Public endpoint untuk daftar mitra approved
 		publicRoutes.GET("/about-xetor/title/:title", adminHandler.GetAboutXetorByTitle) // Public endpoint untuk version, terms, privacy policy
 	}
 

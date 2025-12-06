@@ -243,14 +243,15 @@ func (r *PartnerRepository) UpdatePassword(id int, newHashedPassword string) err
 // GetAddressByPartnerID mengambil alamat usaha partner
 func (r *PartnerRepository) GetAddressByPartnerID(partnerID int) (*partner.PartnerAddress, error) {
 	query := `
-		SELECT id, partner_id, address, city_regency, province, postal_code, created_at, updated_at
+		SELECT id, partner_id, address, city_regency, province, postal_code, latitude, longitude, created_at, updated_at
 		FROM partner_addresses
 		WHERE partner_id = $1`
 
 	var addr partner.PartnerAddress
 	err := r.db.QueryRow(query, partnerID).Scan(
 		&addr.ID, &addr.PartnerID, &addr.Address, &addr.CityRegency,
-		&addr.Province, &addr.PostalCode, &addr.CreatedAt, &addr.UpdatedAt,
+		&addr.Province, &addr.PostalCode, &addr.Latitude, &addr.Longitude,
+		&addr.CreatedAt, &addr.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -265,13 +266,15 @@ func (r *PartnerRepository) GetAddressByPartnerID(partnerID int) (*partner.Partn
 // UpsertAddress membuat atau mengupdate alamat partner (INSERT ON CONFLICT)
 func (r *PartnerRepository) UpsertAddress(addr *partner.PartnerAddress) error {
 	query := `
-		INSERT INTO partner_addresses (partner_id, address, city_regency, province, postal_code, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		INSERT INTO partner_addresses (partner_id, address, city_regency, province, postal_code, latitude, longitude, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		ON CONFLICT (partner_id) DO UPDATE SET -- Jika partner_id sudah ada, update saja
 			address = EXCLUDED.address,
 			city_regency = EXCLUDED.city_regency,
 			province = EXCLUDED.province,
 			postal_code = EXCLUDED.postal_code,
+			latitude = EXCLUDED.latitude,
+			longitude = EXCLUDED.longitude,
 			updated_at = NOW()
 		RETURNING id, created_at, updated_at` // Kembalikan ID dan timestamp
 
@@ -280,8 +283,18 @@ func (r *PartnerRepository) UpsertAddress(addr *partner.PartnerAddress) error {
 		postalCode = addr.PostalCode
 	}
 
+	var latitude sql.NullFloat64
+	if addr.Latitude.Valid {
+		latitude = addr.Latitude
+	}
+
+	var longitude sql.NullFloat64
+	if addr.Longitude.Valid {
+		longitude = addr.Longitude
+	}
+
 	err := r.db.QueryRow(query,
-		addr.PartnerID, addr.Address, addr.CityRegency, addr.Province, postalCode,
+		addr.PartnerID, addr.Address, addr.CityRegency, addr.Province, postalCode, latitude, longitude,
 	).Scan(&addr.ID, &addr.CreatedAt, &addr.UpdatedAt) // Scan ID dan timestamp baru/update
 
 	if err != nil {

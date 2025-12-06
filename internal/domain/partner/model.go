@@ -61,16 +61,20 @@ type PartnerAddress struct {
 	CityRegency string         `json:"city_regency"`
 	Province    string         `json:"province"`
 	PostalCode  sql.NullString `json:"postal_code,omitempty"`
+	Latitude    sql.NullFloat64 `json:"latitude,omitempty"`    // Koordinat latitude
+	Longitude   sql.NullFloat64 `json:"longitude,omitempty"`   // Koordinat longitude
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 // UpdatePartnerAddressRequest data untuk membuat/mengupdate alamat partner
 type UpdatePartnerAddressRequest struct {
-	Address     string `json:"address" binding:"required"`
-	CityRegency string `json:"city_regency" binding:"required"`
-	Province    string `json:"province" binding:"required"`
-	PostalCode  string `json:"postal_code"` // Opsional
+	Address     string   `json:"address" binding:"required"`
+	CityRegency string   `json:"city_regency" binding:"required"`
+	Province    string   `json:"province" binding:"required"`
+	PostalCode  string   `json:"postal_code"`        // Opsional
+	Latitude    *float64 `json:"latitude"`          // Opsional, pointer agar bisa null
+	Longitude   *float64 `json:"longitude"`         // Opsional, pointer agar bisa null
 }
 
 // PartnerSchedule merepresentasikan satu baris data dari tabel partner_schedules (struktur baru)

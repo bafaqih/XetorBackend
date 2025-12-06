@@ -78,6 +78,9 @@ type Repository interface {
 	// Promotion banners
 	GetAllActivePromotionBanners() ([]PromotionBanner, error)
 
+	// Public partners
+	GetAllApprovedPartners() ([]PublicPartnerResponse, error)
+
 	// Topup methods
 	CreateTopupTransaction(userID int, amount float64, paymentMethodID int) (string, error)
 	CreateTopupTransactionInitialized(userID int, amount float64, paymentMethodID int) (string, error)                          // Create dengan status "Initialized"
@@ -358,6 +361,15 @@ func (s *Service) GetAllActivePromotionBanners() ([]PromotionBanner, error) {
 		return nil, errors.New("gagal mengambil banner promosi")
 	}
 	return banners, nil
+}
+
+// GetAllApprovedPartners mengambil semua mitra yang statusnya "Approved" beserta alamat dan koordinat
+func (s *Service) GetAllApprovedPartners() ([]PublicPartnerResponse, error) {
+	partners, err := s.repo.GetAllApprovedPartners()
+	if err != nil {
+		return nil, errors.New("gagal mengambil daftar mitra")
+	}
+	return partners, nil
 }
 
 // --- User Wallet Service Method ---

@@ -366,6 +366,18 @@ func (s *PartnerService) UpdateAddress(partnerIDStr string, req UpdatePartnerAdd
 		CityRegency: req.CityRegency,
 		Province:    req.Province,
 		PostalCode:  sql.NullString{String: req.PostalCode, Valid: req.PostalCode != ""},
+		Latitude:    sql.NullFloat64{Valid: req.Latitude != nil, Float64: 0},
+		Longitude:   sql.NullFloat64{Valid: req.Longitude != nil, Float64: 0},
+	}
+
+	// Set latitude jika ada
+	if req.Latitude != nil {
+		addr.Latitude = sql.NullFloat64{Valid: true, Float64: *req.Latitude}
+	}
+
+	// Set longitude jika ada
+	if req.Longitude != nil {
+		addr.Longitude = sql.NullFloat64{Valid: true, Float64: *req.Longitude}
 	}
 
 	err = s.repo.UpsertAddress(addr)
