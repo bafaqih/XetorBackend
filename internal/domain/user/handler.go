@@ -649,3 +649,25 @@ func (h *Handler) GoogleAuth(c *gin.Context) {
 		User:  user,
 	})
 }
+
+// GetWasteDetailByID handler untuk mengambil waste detail berdasarkan ID
+func (h *Handler) GetWasteDetailByID(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID tidak valid"})
+		return
+	}
+
+	wasteDetail, err := h.service.GetWasteDetailByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil detail sampah"})
+		return
+	}
+	if wasteDetail == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Detail sampah tidak ditemukan"})
+		return
+	}
+
+	c.JSON(http.StatusOK, wasteDetail)
+}

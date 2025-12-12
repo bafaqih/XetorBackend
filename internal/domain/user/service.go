@@ -21,6 +21,7 @@ import (
 	"google.golang.org/api/idtoken"
 	"xetor.id/backend/internal/auth"
 	"xetor.id/backend/internal/config"
+	"xetor.id/backend/internal/domain/admin"
 	"xetor.id/backend/internal/notification"
 	"xetor.id/backend/internal/temporary_token"
 )
@@ -96,15 +97,17 @@ type Repository interface {
 
 type Service struct {
 	repo            Repository
+	adminRepo      admin.AdminRepository
 	tokenStore      *temporary_token.TokenStore
 	notifService    *notification.NotificationService
 	midtransService MidtransServiceInterface
 }
 
 // NewService membuat instance baru dari Service
-func NewService(repo Repository, tokenStore *temporary_token.TokenStore, notifService *notification.NotificationService, midtransService MidtransServiceInterface) *Service {
+func NewService(repo Repository, adminRepo admin.AdminRepository, tokenStore *temporary_token.TokenStore, notifService *notification.NotificationService, midtransService MidtransServiceInterface) *Service {
 	return &Service{
 		repo:            repo,
+		adminRepo:      adminRepo,
 		tokenStore:      tokenStore,
 		notifService:    notifService,
 		midtransService: midtransService,
@@ -878,4 +881,59 @@ func stringToPtr(s string) *string {
 		return nil
 	}
 	return &s // Mengambil alamat memori dari string
+}
+
+// GetWasteDetailByID mengambil waste detail berdasarkan ID dan transform ke response model
+func (s *Service) GetWasteDetailByID(id int) (*WasteDetailResponse, error) {
+	wd, err := s.adminRepo.GetWasteDetailByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if wd == nil {
+		return nil, nil // Not found
+	}
+
+	// Transform WasteDetail ke WasteDetailResponse
+	response := &WasteDetailResponse{
+		ID:    wd.ID,
+		Name:  wd.Name,
+		Xpoin: wd.Xpoin,
+	}
+
+	// Transform WasteTypeID
+	if wd.WasteTypeID.Valid {
+		response.WasteTypeID = int(wd.WasteTypeID.Int32)
+	} else {
+		response.WasteTypeID = 0
+	}
+
+	// Transform WasteTypeName
+	if wd.WasteTypeName.Valid {
+		response.WasteTypeName = wd.WasteTypeName.String
+	} else {
+		response.WasteTypeName = ""
+	}
+
+	// Transform ProperDisposalMethod
+	if wd.ProperDisposalMethod.Valid {
+		response.ProperDisposalMethod = wd.ProperDisposalMethod.String
+	} else {
+		response.ProperDisposalMethod = ""
+	}
+
+	// Transform PositiveImpact
+	if wd.PositiveImpact.Valid {
+		response.PositiveImpact = wd.PositiveImpact.String
+	} else {
+		response.PositiveImpact = ""
+	}
+
+	// Transform DecompositionTime
+	if wd.DecompositionTime.Valid {
+		response.DecompositionTime = wd.DecompositionTime.String
+	} else {
+		response.DecompositionTime = ""
+	}
+
+	return response, nil
 }

@@ -217,3 +217,16 @@ type PublicPartnerResponse struct {
 	Latitude     sql.NullFloat64 `json:"latitude,omitempty"`
 	Longitude    sql.NullFloat64 `json:"longitude,omitempty"`
 }
+
+// WasteDetailResponse untuk response endpoint /user/waste-details/:id
+// Transform sql.NullString dan sql.NullInt32 menjadi string dan int biasa
+type WasteDetailResponse struct {
+	ID                   int    `json:"id"`
+	Name                 string `json:"name"`
+	WasteTypeID          int    `json:"waste_type_id"` // 0 jika null
+	WasteTypeName        string `json:"waste_type_name"` // "" jika null
+	ProperDisposalMethod string `json:"proper_disposal_method"` // "" jika null
+	PositiveImpact       string `json:"positive_impact"` // "" jika null
+	DecompositionTime    string `json:"decomposition_time"` // "" jika null
+	Xpoin                int    `json:"xpoin"`
+}

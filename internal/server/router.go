@@ -80,6 +80,9 @@ func NewRouter(userHandler *user.Handler, adminHandler *admin.AdminHandler, midt
 			// Endpoint lain terkait deposit bisa ditambahkan di sini nanti
 		}
 
+		// Rute untuk Waste Details (untuk scan result)
+		userRoutes.GET("/waste-details/:id", userHandler.GetWasteDetailByID)
+
 	}
 
 	// Grup routing untuk partner

@@ -38,8 +38,8 @@ func main() {
 	midtransService := midtrans.NewMidtransService(userRepo, notifService)
 	midtransHandler := midtrans.NewMidtransHandler(midtransService)
 	
-	// UserService sekarang butuh MidtransService
-	userService := user.NewService(userRepo, tokenStore, notifService, midtransService)
+	// UserService sekarang butuh MidtransService dan AdminRepository
+	userService := user.NewService(userRepo, adminRepo, tokenStore, notifService, midtransService)
 	userHandler := user.NewHandler(userService)
 
 	// Komponen Partner
